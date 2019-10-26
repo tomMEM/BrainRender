@@ -30,6 +30,7 @@ class Paths:
         
         self.mouse_connectivity_cache = paths_dict['mouse_connectivity_cache']
         self.mouse_celltype_cache = paths_dict['mouse_celltype_cache']
+        self.gene_expression = paths_dict['gene_expression']
 
         self.streamlines_cache = paths_dict['streamlines_cache']
 
