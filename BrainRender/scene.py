@@ -762,7 +762,7 @@ class Scene(ABA):  # subclass brain render to have acces to structure trees
                 f"File format: {filepath.suffix} is not currently supported. "
                 f"Please use one of: {supported_formats}")
 
-    def add_cells_for_genexpression(self, expid=None, exp_data_folder=None, 
+    def add_cells_for_genexpression(self, expid=None, exp_data_folder=None, downsample=False,  
                 colors=["green", "orange"], image_type="expression", **kwargs):
         # Get the files with the cell data
         cells_files = self.geapi.load_cells(exp_data_path=exp_data_folder, expid=expid, image_type=image_type)
@@ -780,6 +780,10 @@ class Scene(ABA):  # subclass brain render to have acces to structure trees
         all_cells = []
         print("Loading cell data for {} images.".format(n_slices))
         for (img_id, cells), color in tqdm(zip(cells_files.items(), colors)):
+            if downsample is not None and downsample:
+                if downsample > 1:
+                    n_cells = int(len(cells)/downsample)
+                    cells = cells.sample(n_cells)
             cells_colors = [color for i in range(len(cells))]
             slice_cells = self.add_cells(cells, color=cells_colors, **kwargs)
             all_cells.append(slice_cells)
