@@ -44,7 +44,8 @@ class GeneExpressionAPI(Paths):
         "rma::criteria,[data_set_id$eqEXPID]"
         )
 
-    image_download_url = ("http://api.brain-map.org/api/v2/section_image_download/IMAGEID")
+    image_download_url = ("http://api.brain-map.org/api/v2/image_download/IMAGEID") # section_
+    expression_image_download_url = ("http://api.brain-map.org/api/v2/section_image_download/IMAGEID") 
 
     # URLs based on https://github.com/efferencecopy/ecallen/blob/master/ecallen/images.py
     experiment_metadata_url = ('http://api.brain-map.org/api/v2/data/query.json?criteria='
@@ -136,7 +137,7 @@ class GeneExpressionAPI(Paths):
         self.downlad_images(expid, res.id.values, **kwargs)
 
 
-    def downlad_images(self, expid, image_ids, dest_folder=None):
+    def downlad_images(self, expid, image_ids, dest_folder=None, download_expression=False):
         """
             [Downloads images as binary data and saves as .png. It's a bit slow.]
         """
@@ -156,7 +157,10 @@ class GeneExpressionAPI(Paths):
             savefile = os.path.join(dest_folder, str(iid)+".png")
             if os.path.isfile(savefile): continue
 
-            url = self.image_download_url.replace("IMAGEID", str(iid))
+            if download_expression:
+                url = self.image_download_url.replace("IMAGEID", str(iid))
+            else:
+                url = self.expression_image_download_url.replace("IMAGEID", str(iid))
             res = request(url)
             # save binary data to an image
             with open(savefile, "wb") as f:
@@ -290,44 +294,58 @@ class GeneExpressionAPI(Paths):
 
         return rprops
 
-    def get_cells_for_experiment(self, expid=None, exp_data_path=None):
-        if exp_data_path is not None:
-            exp_images = listdir(exp_data_path)
-            if expid is None: raise ValueError("Need to pass a value for expid")
-        elif expid is not None:
-            # download the images for the experiment:
-            self.fetch_images_for_exp(expid)
+    def get_cells_for_experiment(self, expid, ish_minval=85, overwrite=False):
+        # download the images for the experiment:
+        self.fetch_images_for_exp(expid)
 
-            # get the path to the images
-            exp_images = listdir(os.path.join(self.gene_expression, str(expid)))
-        else:
-            raise ValueError("Need to pass either expid or exp_data_path to get_cells_for_experiment function")
+        # get the path to the images
+        exp_images = listdir(os.path.join(self.gene_expression, str(expid)))
+
+        # exp folder
+        exp_folder = os.path.join(self.gene_expression, str(expid))
 
         # Get cells aligned to ccf
         print("Extracting cells for experiment: {}".format(expid))
-        cells = {"x":[], "y":[], "z":[]}
+        data_files = []
         for img in tqdm(exp_images):
-            img_cells = self.find_cells_in_image(img, expid)
-            cells['x'].extend(img_cells[0])
-            cells['y'].extend(img_cells[1])
-            cells['z'].extend(img_cells[2])
-            break
-        cells = pd.DataFrame(cells)
-        savepath = os.path.join(self.gene_expression, str(expid))
-        if not os.path.isdir(savepath):
-            os.mkdir(savepath)
-        
-        cells.to_pickle(os.path.join(savepath, str(expid)+".pkl"))
-        return cells
+            if not ".png" in img: continue
+
+            # Get image name and check if anlyzed already
+            img_id = int(strip_path(img)[-1].split(".")[0])
+            img_data_file = os.path.join(exp_folder, str(img_id)+".pkl")
+            if os.path.isfile(img_data_file) and not overwrite:
+                data_files.append(img_data_file)
+            else:
+                cells = {"x":[], "y":[], "z":[]}
+                img_cells = self.find_cells_in_image(img, expid, ish_minval=ish_minval)
+                cells['x'].extend(img_cells[0])
+                cells['y'].extend(img_cells[1])
+                cells['z'].extend(img_cells[2])
+
+                cells = pd.DataFrame(cells)
+                cells.to_pickle(img_data_file)
+                data_files.append(img_data_file)
+        return data_files
     
     def load_cells(self, expid=None, exp_data_path=None):
+        """
+            [Load the .pkl files with the cell location for each image in the dataset for experiment with id expid
+            (or in folder exp_data_path).]
+        """
         if exp_data_path is not None:
-            return pd.read_pickle(exp_data_path)
+            return {os.path.split(f)[-1].split(".")[0]: pd.read_pickle(f) 
+                        for f in listdir(exp_data_path) if ".pkl" in f}
         else:
-            return pd.read_pickle(os.path.join(self.gene_expression, str(expid),str(expid)+".pkl" ))
+            fld_path =  os.path.join(self.gene_expression, str(expid))
+            return {os.path.split(f)[-1].split(".")[0]: pd.read_pickle(f)
+                        for f in listdir(fld_path) if ".pkl" in f}
+            
 
+    def find_cells_in_image(self, img_path, expid, ish_minval=70):
+        """
+            [Processes an image to extract cell locations and align these coordinates to the CCF]
+        """
 
-    def find_cells_in_image(self, img_path, expid):
         # grab the RNA probes from the imaging parameters
         img_params = self.get_imaging_params(expid)
 
@@ -335,6 +353,7 @@ class GeneExpressionAPI(Paths):
         rprops = self.extract_region_props(img_path,
                                             img_params,
                                             img_params['probes'],
+                                            ish_minval=ish_minval,
                                             )
 
         # grab the X and Y pixels at the center of each labeled region
@@ -389,6 +408,6 @@ class GeneExpressionAPI(Paths):
 
 if __name__ == "__main__":
     api = GeneExpressionAPI()
-    # api.search_experiments_ids("sagittal", "Adora2a", fetch_images=True)
-    # api.get_cells_for_experiment(api.test_dataset_id)
-    api.load_cells(api.test_dataset_id)
+    # print(api.search_experiments_ids("coronal", "Avp", fetch_images=False))
+    api.get_cells_for_experiment(1687)
+    # api.load_cells(api.test_dataset_id)

@@ -9,6 +9,7 @@ from vtk import vtkOBJExporter, vtkRenderWindow
 from functools import partial
 from pathlib import Path
 import datetime
+from collections import OrderedDict
 
 from BrainRender.colors import *
 from BrainRender.variables import *
@@ -17,6 +18,7 @@ from BrainRender.Utils.ABA.connectome import ABA
 from BrainRender.Utils.data_io import load_json, load_volume_file
 from BrainRender.Utils.data_manipulation import get_coords, flatten_list, get_slice_coord, is_any_item_in_list, mirror_actor_at_point
 from BrainRender.Utils import actors_funcs
+from BrainRender.Utils.genexpr.genexpr_apy import GeneExpressionAPI
 
 from BrainRender.Utils.parsers.mouselight import NeuronsParser, edit_neurons
 from BrainRender.Utils.parsers.streamlines import parse_streamline
@@ -60,6 +62,7 @@ class Scene(ABA):  # subclass brain render to have acces to structure trees
 
         """
         ABA.__init__(self, paths_file=paths_file)
+        self.geapi = GeneExpressionAPI() # used to load the results of the gene expression cell identification
 
         self.verbose = verbose
         self.regions_aba_color = regions_aba_color
@@ -757,7 +760,41 @@ class Scene(ABA):  # subclass brain render to have acces to structure trees
                 f"File format: {filepath.suffix} is not currently supported. "
                 f"Please use one of: {supported_formats}")
 
-    def add_cells(self, coords, color="red", radius=25, res=3): 
+    def add_cells_for_genexpression(self, expid=None, exp_data_folder=None, colors=["green", "orange"], **kwargs):
+        # Get the files with the cell data
+        cells_files = self.geapi.load_cells(exp_data_path=exp_data_folder, expid=expid)
+        if not cells_files:
+            print("Could not find cells to render")
+            return None
+        else:
+            cells_files = OrderedDict(sorted(cells_files.items())) # sort them by img ID
+
+        # Get a color for each slice
+        n_slices = len(cells_files.keys())
+        colors = makePalette(*colors, n_slices)
+
+        # Render each slice individually
+        all_cells = []
+        for (img_id, cells), color in zip(cells_files.items(), colors):
+            cells_colors = [color for i in range(len(cells))]
+            slice_cells = self.add_cells(cells, color=cells_colors, **kwargs)
+            all_cells.append(slice_cells)
+
+        # add a slider that specifies which slice is showed at each time
+        def sliderfunc(widget, event):
+            value = int(widget.GetRepresentation().GetValue())
+            all_cells[value].alpha(1)
+            [cells.alpha(0) for i, cells in enumerate(all_cells) if i != value]
+
+
+        self.plotter.addSlider2D(
+            sliderfunc, xmin=0.01, xmax=n_slices, value=n_slices/2,
+            pos=14, c="ivory", title="Slice #)"
+        )
+
+
+
+    def add_cells(self, coords, color="ivory", radius=25, res=3): 
         """
             [Load location of cells from a file (csv and HDF) and render as spheres aligned to the root mesh. ]
             Arguments:
@@ -773,6 +810,7 @@ class Scene(ABA):  # subclass brain render to have acces to structure trees
             coords = [[x, y, z] for x,y,z in zip(coords['x'].values, coords['y'].values, coords['z'].values)]
         spheres = Spheres(coords, c=color, r=radius, res=res)
         self.actors['others'].append(spheres)
+        return spheres
 
     def add_image(self, image_file_path, color=None, alpha=None,
                   obj_file_path=None, voxel_size=1, orientation="saggital",
