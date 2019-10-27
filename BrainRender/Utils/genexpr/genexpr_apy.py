@@ -75,7 +75,7 @@ class GeneExpressionAPI(Paths):
     """
     @staticmethod
     def imgid_from_imgpath(imgpath, image_type="expression"):
-        if image_type is None:
+        if image_type is None or not image_type:
             img_id = int(strip_path(imgpath)[-1].split(".")[0])
         else:
             img_id = int(strip_path(imgpath)[-1].split("_")[0])
@@ -145,7 +145,6 @@ class GeneExpressionAPI(Paths):
         res = self.fetch_images_metadata(expid)
         self.downlad_images(expid, res.id.values, **kwargs)
 
-
     def downlad_images(self, expid, image_ids, dest_folder=None, image_type=None):
         """
             [Downloads images as binary data and saves as .png. It's a bit slow.]
@@ -163,7 +162,7 @@ class GeneExpressionAPI(Paths):
 
         print("Downloading {} images for experiment: {}".format(len(image_ids), expid))
         for iid in tqdm(image_ids):
-            if image_type is None:
+            if image_type is None or not image_type:
                 url = self.image_download_url.replace("IMAGEID", str(iid))
                 name_ext = ""
             elif image_type =="expression":
@@ -210,7 +209,6 @@ class GeneExpressionAPI(Paths):
 
         return affine3
 
-
     def get_affine_2d(self, image_id) -> dict:
         """
         Get the coefficients for 2D affine transformation.
@@ -239,9 +237,6 @@ class GeneExpressionAPI(Paths):
                 'section_number': res['section_number']}
 
         return affine2
-
-
-
 
     """
         ########## IMAGE PROCESSING ############
@@ -311,11 +306,12 @@ class GeneExpressionAPI(Paths):
         self.fetch_images_for_exp(expid, image_type=image_type)
 
         # get the path to the images
-        if image_type is not None:
-            exp_images = [f for f in listdir(os.path.join(self.gene_expression, str(expid))) if image_type in os.path.split(f)[-1]]
-        else:
+        if image_type is not None and image_type:
             exp_images = [f for f in listdir(os.path.join(self.gene_expression, str(expid))) 
-                        if "expression" not in os.path.split(f)[-1] and "projection" not in os.path.split(f)[-1]]
+                if image_type in os.path.split(f)[-1]  and ".pkl" not in f]
+        else:
+            exp_images = [f for f in listdir(os.path.join(self.gene_expression, str(expid)))
+                        if "expression" not in os.path.split(f)[-1] and "projection" not in os.path.split(f)[-1] and ".pkl" not in f]
 
         # exp folder
         exp_folder = os.path.join(self.gene_expression, str(expid))
@@ -374,13 +370,8 @@ class GeneExpressionAPI(Paths):
     def analyze_expression_image(self, img_path, expid, threshold=60, image_type=None):
         img = misc.imread(img_path)
 
-        # # flatten the image
-        # img = np.sum(img, 2)
-
         # threshold the image
         thresh = threshold_otsu(img[img > threshold], nbins=256) #
-
-        # apply the threshold to the image, which is now just a 2D matrix
         bw = img > thresh
 
         # label image regions with an integer. Each region gets a unique integer
@@ -467,6 +458,6 @@ if __name__ == "__main__":
     api = GeneExpressionAPI()
     # print(api.search_experiments_ids("coronal", "Avp", fetch_images=False))
     # api.fetch_images_for_exp(1687, image_type="expression")
-    api.get_cells_for_experiment(1687, image_type="expression", overwrite=True)
+    api.get_cells_for_experiment(79591679, image_type="", overwrite=True, threshold=250)
 
     # api.load_cells(api.test_dataset_id)

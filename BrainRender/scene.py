@@ -107,6 +107,8 @@ class Scene(ABA):  # subclass brain render to have acces to structure trees
         self.inset = None  # the first time the scene is rendered create and store the inset here
         self.slider_actors = None # list to hold actors to be affected by opacity slider
         self.is_rendered = False # keep track of if the scene has already been rendered
+        self.genexpr_container = None
+        self.show_genexp_button = False
     
     ####### UTILS
     def check_obj_file(self, structure, obj_file):
@@ -776,6 +778,7 @@ class Scene(ABA):  # subclass brain render to have acces to structure trees
 
         # Render each slice individually
         all_cells = []
+        print("Loading cell data for {} images.".format(n_slices))
         for (img_id, cells), color in tqdm(zip(cells_files.items(), colors)):
             cells_colors = [color for i in range(len(cells))]
             slice_cells = self.add_cells(cells, color=cells_colors, **kwargs)
@@ -788,10 +791,20 @@ class Scene(ABA):  # subclass brain render to have acces to structure trees
             all_cells[value].alpha(1)
             [cells.alpha(0) for i, cells in enumerate(all_cells) if i != value]
 
-        # (-16.829700469970703, 13192.5, 133.92999267578125, 7564.240234375, 485.72900390625, 10890.599609375)
+        # If the sections were sagittal or coronal, the slider should have different orientations
+        try:
+            params = self.geapi.get_imaging_params(expid)
+        except:
+            p1, p2 = [-20, 8000, 11000], [13200, 8000, 11000] # orientation for coronal slices by  default
+        else:
+            if params['plane_of_section'] == "sagittal":
+                p1, p2 = [-20, 8000, 0], [13200, 8000, 0] # orientation for coronal slices by  default
+            else:
+                p1, p2 = [-20, 8000, 11000], [13200, 8000, 11000] # orientation for coronal slices by  default
+
         slices_slider = self.plotter.addSlider3D(
                             sliderfunc, xmin=0.01, xmax=n_slices, value=n_slices/2,
-                            pos1=[-20, 8000, 11000], pos2=[13200, 8000, 11000], c="ivory", title=None, showValue=False)
+                            pos1=p1, pos2=p2, c="ivory", title=None, showValue=False)
 
         # Modify the look of the slider
         slider = slices_slider.GetRepresentation()
@@ -800,6 +813,26 @@ class Scene(ABA):  # subclass brain render to have acces to structure trees
         slider.SetTitleHeight(0.03)
         slider.SetLabelHeight(0.02)
         slider.SetRotation(180)
+
+        self.show_genexp_button = True
+        self.genexp_container = all_cells
+
+    def add_genexpr_button(self):
+        # Add a button to show all slices
+        def button_func():
+            [cells.alpha(1) for i, cells in enumerate(self.genexp_container)]
+
+        bu = self.plotter.addButton(
+            button_func,
+            pos=(0.9, 0.95),  # x,y fraction from bottom left corner
+            states=["Show all sections"],
+            c=["white"],
+            bc=["darkgray"], 
+            font="courier",
+            size=18,
+            bold=True,
+            italic=False,
+        )
 
 
 
@@ -1110,6 +1143,9 @@ class Scene(ABA):  # subclass brain render to have acces to structure trees
 
         if self.add_screenshot_button_arg:
             self.add_screenshot_button()
+
+        if self.show_genexp_button:
+            self.add_genexpr_button()
         
         if interactive and not video:
             show(*self.get_actors(), interactive=True, camera=self.camera_params)
@@ -1338,7 +1374,6 @@ class DrosophilaScene(Scene): # Subclass of Scene to override some methods for D
                     print("rendered {}".format(region))
 
 
-
 class LoadedScene:
     def __init__(self, filepath=None):
         if filepath is not None:
@@ -1357,7 +1392,6 @@ class LoadedScene:
             print("Nothing to render, need to load a scene first")
         else:
             self.plotter.show()
-
 
 class DualScene:
     # A class that manages two scenes to display side by side
