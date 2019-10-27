@@ -760,9 +760,10 @@ class Scene(ABA):  # subclass brain render to have acces to structure trees
                 f"File format: {filepath.suffix} is not currently supported. "
                 f"Please use one of: {supported_formats}")
 
-    def add_cells_for_genexpression(self, expid=None, exp_data_folder=None, colors=["green", "orange"], **kwargs):
+    def add_cells_for_genexpression(self, expid=None, exp_data_folder=None, 
+                colors=["green", "orange"], image_type="expression", **kwargs):
         # Get the files with the cell data
-        cells_files = self.geapi.load_cells(exp_data_path=exp_data_folder, expid=expid)
+        cells_files = self.geapi.load_cells(exp_data_path=exp_data_folder, expid=expid, image_type=image_type)
         if not cells_files:
             print("Could not find cells to render")
             return None
@@ -775,10 +776,11 @@ class Scene(ABA):  # subclass brain render to have acces to structure trees
 
         # Render each slice individually
         all_cells = []
-        for (img_id, cells), color in zip(cells_files.items(), colors):
+        for (img_id, cells), color in tqdm(zip(cells_files.items(), colors)):
             cells_colors = [color for i in range(len(cells))]
             slice_cells = self.add_cells(cells, color=cells_colors, **kwargs)
             all_cells.append(slice_cells)
+        all_cells = all_cells[::-1] # reverse the order to match the slider
 
         # add a slider that specifies which slice is showed at each time
         def sliderfunc(widget, event):
@@ -786,11 +788,18 @@ class Scene(ABA):  # subclass brain render to have acces to structure trees
             all_cells[value].alpha(1)
             [cells.alpha(0) for i, cells in enumerate(all_cells) if i != value]
 
+        # (-16.829700469970703, 13192.5, 133.92999267578125, 7564.240234375, 485.72900390625, 10890.599609375)
+        slices_slider = self.plotter.addSlider3D(
+                            sliderfunc, xmin=0.01, xmax=n_slices, value=n_slices/2,
+                            pos1=[-20, 8000, 11000], pos2=[13200, 8000, 11000], c="ivory", title=None, showValue=False)
 
-        self.plotter.addSlider2D(
-            sliderfunc, xmin=0.01, xmax=n_slices, value=n_slices/2,
-            pos=14, c="ivory", title="Slice #)"
-        )
+        # Modify the look of the slider
+        slider = slices_slider.GetRepresentation()
+        slider.SetTubeWidth(0.01)
+        slider.SetSliderWidth(0.03)
+        slider.SetTitleHeight(0.03)
+        slider.SetLabelHeight(0.02)
+        slider.SetRotation(180)
 
 
 

@@ -44,8 +44,9 @@ class GeneExpressionAPI(Paths):
         "rma::criteria,[data_set_id$eqEXPID]"
         )
 
-    image_download_url = ("http://api.brain-map.org/api/v2/image_download/IMAGEID") # section_
-    expression_image_download_url = ("http://api.brain-map.org/api/v2/section_image_download/IMAGEID") 
+    image_download_url = "http://api.brain-map.org/api/v2/image_download/IMAGEID"
+    expression_image_download_url = "http://api.brain-map.org/api/v2/image_download/IMAGEID?view=expression"
+    projection_image_download_url = "http://api.brain-map.org/api/v2/projection_image_download/IMAGEID?view=projection"
 
     # URLs based on https://github.com/efferencecopy/ecallen/blob/master/ecallen/images.py
     experiment_metadata_url = ('http://api.brain-map.org/api/v2/data/query.json?criteria='
@@ -72,6 +73,14 @@ class GeneExpressionAPI(Paths):
     """
         ################## DATA IO ########################
     """
+    @staticmethod
+    def imgid_from_imgpath(imgpath, image_type="expression"):
+        if image_type is None:
+            img_id = int(strip_path(imgpath)[-1].split(".")[0])
+        else:
+            img_id = int(strip_path(imgpath)[-1].split("_")[0])
+        return img_id
+
     def search_experiments_ids(self, plane, gene, fetch_images=False):
         """
             [Given a plane of section and a gene name, checks for ISH experiments that match the criteria. 
@@ -137,7 +146,7 @@ class GeneExpressionAPI(Paths):
         self.downlad_images(expid, res.id.values, **kwargs)
 
 
-    def downlad_images(self, expid, image_ids, dest_folder=None, download_expression=False):
+    def downlad_images(self, expid, image_ids, dest_folder=None, image_type=None):
         """
             [Downloads images as binary data and saves as .png. It's a bit slow.]
         """
@@ -154,13 +163,19 @@ class GeneExpressionAPI(Paths):
 
         print("Downloading {} images for experiment: {}".format(len(image_ids), expid))
         for iid in tqdm(image_ids):
-            savefile = os.path.join(dest_folder, str(iid)+".png")
+            if image_type is None:
+                url = self.image_download_url.replace("IMAGEID", str(iid))
+                name_ext = ""
+            elif image_type =="expression":
+                url = self.expression_image_download_url.replace("IMAGEID", str(iid))
+                name_ext = "_expression"
+            elif image_type == "projection":
+                url = self.projection_image_download_url.replace("IMAGEID", str(iid))
+                name_ext = "_projection"
+
+            savefile = os.path.join(dest_folder, str(iid)+name_ext+".png")
             if os.path.isfile(savefile): continue
 
-            if download_expression:
-                url = self.image_download_url.replace("IMAGEID", str(iid))
-            else:
-                url = self.expression_image_download_url.replace("IMAGEID", str(iid))
             res = request(url)
             # save binary data to an image
             with open(savefile, "wb") as f:
@@ -251,7 +266,6 @@ class GeneExpressionAPI(Paths):
                 as defined by scikit-image's regionprops function
         """
 
-
         # user must specify probe(s) (i.e., color channels) to analyze
         # if only one probe is specified, turn it into a list
         if type(probes) != list and type(probes) == str:
@@ -281,7 +295,6 @@ class GeneExpressionAPI(Paths):
 
             # measure threshold
             thresh = threshold_otsu(img[img > ish_minval], nbins=256)
-
         else:
             raise ValueError('Image is neither FISH nor ISH')
 
@@ -291,15 +304,18 @@ class GeneExpressionAPI(Paths):
         # label image regions with an integer. Each region gets a unique integer
         label_image = label(bw)
         rprops = regionprops(label_image)
-
         return rprops
 
-    def get_cells_for_experiment(self, expid, ish_minval=85, overwrite=False):
+    def get_cells_for_experiment(self, expid, ish_minval=85, image_type="expression", overwrite=False, **kwargs):
         # download the images for the experiment:
-        self.fetch_images_for_exp(expid)
+        self.fetch_images_for_exp(expid, image_type=image_type)
 
         # get the path to the images
-        exp_images = listdir(os.path.join(self.gene_expression, str(expid)))
+        if image_type is not None:
+            exp_images = [f for f in listdir(os.path.join(self.gene_expression, str(expid))) if image_type in os.path.split(f)[-1]]
+        else:
+            exp_images = [f for f in listdir(os.path.join(self.gene_expression, str(expid))) 
+                        if "expression" not in os.path.split(f)[-1] and "projection" not in os.path.split(f)[-1]]
 
         # exp folder
         exp_folder = os.path.join(self.gene_expression, str(expid))
@@ -311,13 +327,20 @@ class GeneExpressionAPI(Paths):
             if not ".png" in img: continue
 
             # Get image name and check if anlyzed already
-            img_id = int(strip_path(img)[-1].split(".")[0])
+            img_id = self.imgid_from_imgpath(img, image_type=image_type)
+
             img_data_file = os.path.join(exp_folder, str(img_id)+".pkl")
             if os.path.isfile(img_data_file) and not overwrite:
                 data_files.append(img_data_file)
             else:
                 cells = {"x":[], "y":[], "z":[]}
-                img_cells = self.find_cells_in_image(img, expid, ish_minval=ish_minval)
+                if image_type is None:
+                    # Use the image processing functions from ecallen
+                    img_cells = self.find_cells_in_image(img, expid, ish_minval=ish_minval)
+                else:
+                    # just get bright pixels
+                    img_cells = self.analyze_expression_image(img, expid, image_type=image_type, **kwargs)
+                
                 cells['x'].extend(img_cells[0])
                 cells['y'].extend(img_cells[1])
                 cells['z'].extend(img_cells[2])
@@ -327,19 +350,53 @@ class GeneExpressionAPI(Paths):
                 data_files.append(img_data_file)
         return data_files
     
-    def load_cells(self, expid=None, exp_data_path=None):
+    def load_cells(self, expid=None, exp_data_path=None, image_type="expression"):
         """
             [Load the .pkl files with the cell location for each image in the dataset for experiment with id expid
             (or in folder exp_data_path).]
         """
         if exp_data_path is not None:
-            return {os.path.split(f)[-1].split(".")[0]: pd.read_pickle(f) 
-                        for f in listdir(exp_data_path) if ".pkl" in f}
+            if image_type is None:
+                return {os.path.split(f)[-1].split(".")[0]: pd.read_pickle(f) 
+                            for f in listdir(exp_data_path) if ".pkl" in f}
+            else:
+                return {os.path.split(f)[-1].split(".")[0]: pd.read_pickle(f) 
+                            for f in listdir(exp_data_path) if ".pkl" in f and image_type in f}
         else:
             fld_path =  os.path.join(self.gene_expression, str(expid))
-            return {os.path.split(f)[-1].split(".")[0]: pd.read_pickle(f)
-                        for f in listdir(fld_path) if ".pkl" in f}
-            
+            if image_type is None:
+                return {os.path.split(f)[-1].split(".")[0]: pd.read_pickle(f)
+                            for f in listdir(fld_path) if ".pkl" in f}
+            else:
+                return {os.path.split(f)[-1].split(".")[0]: pd.read_pickle(f)
+                            for f in listdir(fld_path) if ".pkl" in f and image_type in f}
+    
+    def analyze_expression_image(self, img_path, expid, threshold=60, image_type=None):
+        img = misc.imread(img_path)
+
+        # # flatten the image
+        # img = np.sum(img, 2)
+
+        # threshold the image
+        thresh = threshold_otsu(img[img > threshold], nbins=256) #
+
+        # apply the threshold to the image, which is now just a 2D matrix
+        bw = img > thresh
+
+        # label image regions with an integer. Each region gets a unique integer
+        label_image = label(bw)
+        rprops = regionprops(label_image)
+
+        # grab the X and Y pixels at the center of each labeled region
+        cell_x_pix = np.array([roi['centroid'][1] for roi in rprops])
+        cell_y_pix = np.array([roi['centroid'][0] for roi in rprops])
+
+        # Align the cells coordinates to the Alle CCF v3
+        img_id = self.imgid_from_imgpath(img_path, image_type=image_type)
+        aligned = self.align_cell_coords_to_ccf(cell_x_pix,
+                      cell_y_pix, expid, img_id)
+        return aligned
+
 
     def find_cells_in_image(self, img_path, expid, ish_minval=70):
         """
@@ -361,7 +418,7 @@ class GeneExpressionAPI(Paths):
         cell_y_pix = np.array([roi['centroid'][0] for roi in rprops])
 
         # Align the cells coordinates to the Alle CCF v3
-        img_id = int(strip_path(img_path)[-1].split(".")[0])
+        img_id = self.imgid_from_imgpath(img_path, image_type=image_type)
         aligned = self.align_cell_coords_to_ccf(cell_x_pix,
                       cell_y_pix, expid, img_id)
         return aligned
@@ -409,5 +466,7 @@ class GeneExpressionAPI(Paths):
 if __name__ == "__main__":
     api = GeneExpressionAPI()
     # print(api.search_experiments_ids("coronal", "Avp", fetch_images=False))
-    api.get_cells_for_experiment(1687)
+    # api.fetch_images_for_exp(1687, image_type="expression")
+    api.get_cells_for_experiment(1687, image_type="expression", overwrite=True)
+
     # api.load_cells(api.test_dataset_id)
