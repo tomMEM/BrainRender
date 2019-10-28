@@ -16,7 +16,7 @@ from BrainRender.Utils.data_manipulation import get_coords
 from BrainRender.colors import *
 from BrainRender.variables import *
 from BrainRender.Utils.webqueries import request
-from BrainRender.Utils.ABA.connectome import ABA
+from BrainRender.Utils.ABA.connectomeAPI import ABA
 
 
 class StreamlinesAPI(ABA):
