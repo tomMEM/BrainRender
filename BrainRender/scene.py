@@ -109,6 +109,7 @@ class Scene(ABA):  # subclass brain render to have acces to structure trees
         self.is_rendered = False # keep track of if the scene has already been rendered
         self.genexpr_container = None
         self.show_genexp_button = False
+        self.slices_slider = None
     
     ####### UTILS
     def check_obj_file(self, structure, obj_file):
@@ -805,20 +806,21 @@ class Scene(ABA):  # subclass brain render to have acces to structure trees
             else:
                 p1, p2 = [-20, 8000, 11000], [13200, 8000, 11000] # orientation for coronal slices by  default
 
-        slices_slider = self.plotter.addSlider3D(
-                            sliderfunc, xmin=0.01, xmax=n_slices, value=n_slices/2,
-                            pos1=p1, pos2=p2, c="ivory", title=None, showValue=False)
+        if self.slices_slider is not None:
+            self.slices_slider = self.plotter.addSlider3D(
+                                sliderfunc, xmin=0.01, xmax=n_slices, value=n_slices/2,
+                                pos1=p1, pos2=p2, c="ivory", title=None, showValue=False)
 
-        # Modify the look of the slider
-        slider = slices_slider.GetRepresentation()
-        slider.SetTubeWidth(0.01)
-        slider.SetSliderWidth(0.03)
-        slider.SetTitleHeight(0.03)
-        slider.SetLabelHeight(0.02)
-        slider.SetRotation(180)
+            # Modify the look of the slider
+            slider = self.slices_slider.GetRepresentation()
+            slider.SetTubeWidth(0.01)
+            slider.SetSliderWidth(0.03)
+            slider.SetTitleHeight(0.03)
+            slider.SetLabelHeight(0.02)
+            slider.SetRotation(180)
 
-        self.show_genexp_button = True
-        self.genexp_container = all_cells
+            self.show_genexp_button = True
+            self.genexp_container = all_cells
 
     def add_genexpr_button(self):
         # Add a button to show all slices

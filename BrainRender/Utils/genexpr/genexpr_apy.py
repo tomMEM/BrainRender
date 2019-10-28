@@ -104,8 +104,8 @@ class GeneExpressionAPI(Paths):
                             [134, 7564], 
                             [486, 10891])
 
-        self.HCF_genes = [73520980, 70927813, 71924374, 77925097] 
-        # list of experiments for genes highly expressed in HCF (hippocampus)
+        self.test_expids = [77413702, 79490073, 79488957, 70723459]  # ! the last one is sagittal!!
+        # list of experiments for genes highly expressed in cerebellar cortex
         # just coronal sections, for testing. 
 
     """
@@ -671,8 +671,8 @@ if __name__ == "__main__":
     # api.get_gene_expression_to_obj(71670687, threshold=99.99)
 
 
-    for expid in api.HCF_genes:
-        api.get_cells_for_experiment(expid, image_type="expression", overwrite=True, threshold=204)
+    for expid in api.test_expids:
+        api.get_cells_for_experiment(expid, image_type="expression", overwrite=True, threshold=100)
 
 
 
