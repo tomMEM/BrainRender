@@ -29,6 +29,7 @@ class Paths:
         self.morphology_mouselight = paths_dict['morphology_mouselight']
         
         self.mouse_connectivity_cache = paths_dict['mouse_connectivity_cache']
+        self.mouse_space_cache =  paths_dict['mouse_space_cache']
         self.mouse_celltype_cache = paths_dict['mouse_celltype_cache']
         self.gene_expression = paths_dict['gene_expression']
 

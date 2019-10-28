@@ -12,6 +12,7 @@ morphology_mouselight: "Data/Morphology/MouseLight" # .swc and .json files from 
 
 # Allen caches
 mouse_connectivity_cache: Data/ABA/MCC
+mouse_space_cache:  Data/ABA/MSC
 mouse_celltype_cache: Data/ABA/MCTC
 gene_expression: Data/ABA/gene_expression
 

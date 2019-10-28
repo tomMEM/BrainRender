@@ -16,13 +16,16 @@ from PIL import Image
 Image.MAX_IMAGE_PIXELS = None # <- deactivate image bomb error
 import timeit
 
-try:
-    import cv2
-    opencv_imported = True
-except ImportError:
-    print("Could not import opencv, using skimage instead")
+if __name__ == "__main__":
+    try:
+        import cv2
+        opencv_imported = True
+    except ImportError:
+        print("Could not import opencv, using skimage instead")
+        opencv_imported = False
+else:
     opencv_imported = False
-
+    
 # For loadng volumetric data
 import napari
 import SimpleITK as sitk

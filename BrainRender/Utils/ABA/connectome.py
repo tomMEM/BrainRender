@@ -10,6 +10,7 @@ from allensdk.api.queries.ontologies_api import OntologiesApi
 from allensdk.api.queries.reference_space_api import ReferenceSpaceApi
 from allensdk.api.queries.mouse_connectivity_api import MouseConnectivityApi
 from allensdk.api.queries.tree_search_api import TreeSearchApi
+from allensdk.core.reference_space_cache import ReferenceSpaceCache
 
 from BrainRender.Utils.paths_manager import Paths
 
@@ -21,6 +22,8 @@ class ABA(Paths):
     """
     # useful vars for analysis    
     excluded_regions = ["fiber tracts"]
+
+    resolution = 25 # in microns, options are (10, 25, 50, 100).
 
     def __init__(self, projection_metric = "projection_energy", paths_file=None):
         """ path_file {[str]} -- [Path to a YAML file specifying paths to data folders, to replace default paths] (default: {None}) """
@@ -37,8 +40,14 @@ class ABA(Paths):
         self.oapi = OntologiesApi()
         self.get_structures_sets()
 
-        # get reference space
+        # get reference space and cache
         self.space = ReferenceSpaceApi()
+        self.space_cache = ReferenceSpaceCache(
+                            manifest=os.path.join(self.mouse_space_cache, "manifest.json"),  # downloaded files are stored relative to here
+                            resolution=self.resolution,
+                            reference_space_key="annotation/ccf_2017"  # use the latest version of the CCF
+                            )
+        self.annotated_volume, _ = self.space_cache.get_annotation_volume()
 
         # mouse connectivity API [used for tractography]
         self.mca = MouseConnectivityApi()
@@ -319,4 +328,12 @@ class ABA(Paths):
 
     def get_structure_descendants(self, regions):
         return self.get_structure_ancestors(regions, ancestors=False, descendants=True)
+
+    def get_structure_from_coordinates(self, p0):
+        voxel = np.round(np.array(p0) / self.resolution).astype(int)
+        structure_id = self.annotated_volume[voxel[0], voxel[1], voxel[2]]
+
+        # Each voxel in the annotation volume is annotated as specifically as possible
+        structure = self.structure_tree.get_structures_by_id([structure_id])[0]
+        return structure
 
