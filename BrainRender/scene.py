@@ -778,14 +778,13 @@ class Scene(ABA):  # subclass brain render to have acces to structure trees
 
         # Render each slice individually
         all_cells = []
-        print("Loading cell data for {} images.".format(n_slices))
         for (img_id, cells), color in tqdm(zip(cells_files.items(), colors)):
             if downsample is not None and downsample:
                 if downsample > 1:
                     n_cells = int(len(cells)/downsample)
                     cells = cells.sample(n_cells)
             cells_colors = [color for i in range(len(cells))]
-            slice_cells = self.add_cells(cells, color=cells_colors, **kwargs)
+            slice_cells = self.add_cells(cells, color=cells_colors, force_int=True, **kwargs)
             all_cells.append(slice_cells)
         all_cells = all_cells[::-1] # reverse the order to match the slider
 
@@ -840,7 +839,7 @@ class Scene(ABA):  # subclass brain render to have acces to structure trees
 
 
 
-    def add_cells(self, coords, color="ivory", radius=25, res=3): 
+    def add_cells(self, coords, color="ivory", radius=25, res=3, force_int=False): 
         """
             [Load location of cells from a file (csv and HDF) and render as spheres aligned to the root mesh. ]
             Arguments:
@@ -854,6 +853,14 @@ class Scene(ABA):  # subclass brain render to have acces to structure trees
         """
         if isinstance(coords, pd.DataFrame):
             coords = [[x, y, z] for x,y,z in zip(coords['x'].values, coords['y'].values, coords['z'].values)]
+        if force_int:
+            coords = [[int(x), int(y), int(z)]for x,y,z in coords]
+        
+        # remove duplicates which give an error
+        coords = set([tuple(c) for c in coords]) 
+        if len(coords) < 1: 
+            return None
+
         spheres = Spheres(coords, c=color, r=radius, res=res)
         self.actors['others'].append(spheres)
         return spheres

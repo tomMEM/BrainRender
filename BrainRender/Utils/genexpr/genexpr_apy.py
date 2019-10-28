@@ -14,6 +14,14 @@ from skimage import dtype_limits
 from scipy import misc
 from PIL import Image
 Image.MAX_IMAGE_PIXELS = None # <- deactivate image bomb error
+import timeit
+
+try:
+    import cv2
+    opencv_imported = True
+except ImportError:
+    print("Could not import opencv, using skimage instead")
+    opencv_imported = False
 
 # For loadng volumetric data
 import napari
@@ -77,8 +85,15 @@ class GeneExpressionAPI(Paths):
                         ',rma::criteria,[id$eqIMGID],rma::include,alignment2d')
 
 
-    def __init__(self):
+    def __init__(self, debug=False, use_opencv=True):
+        # Check if we can use opencv
+        if use_opencv and not opencv_imported:
+            use_opencv = False 
+        self.use_opencv = use_opencv 
+
         Paths.__init__(self)
+        self.debug = debug
+
         self.test_dataset_id = 167643437
 
         self.nrrd_fld = os.path.join(self.gene_expression, "nrrd")
@@ -88,6 +103,10 @@ class GeneExpressionAPI(Paths):
         self.root_bounds = ([-17, 13193],  # used to reshape gene expression grid arrays
                             [134, 7564], 
                             [486, 10891])
+
+        self.HCF_genes = [73520980, 70927813, 71924374, 77925097] 
+        # list of experiments for genes highly expressed in HCF (hippocampus)
+        # just coronal sections, for testing. 
 
     """
         ################## DATA IO ########################
@@ -194,7 +213,7 @@ class GeneExpressionAPI(Paths):
             except:
                 raise FileExistsError("Could not create target directory: {}".format(dest_folder))
 
-        print("Downloading {} images for experiment: {}".format(len(image_ids), expid))
+        print("\nDownloading {} images for experiment: {}".format(len(image_ids), expid))
         for iid in tqdm(image_ids):
             if image_type is None or not image_type:
                 url = self.image_download_url.replace("IMAGEID", str(iid))
@@ -352,7 +371,7 @@ class GeneExpressionAPI(Paths):
 
         # Get cells aligned to ccf
         print("Extracting cells for experiment: {}".format(expid))
-        data_files = []
+        data_files, cells_count = [], 0
         for img in tqdm(exp_images):
             if not ".png" in img: continue
 
@@ -362,6 +381,7 @@ class GeneExpressionAPI(Paths):
             img_data_file = os.path.join(exp_folder, str(img_id)+".pkl")
             if os.path.isfile(img_data_file) and not overwrite:
                 data_files.append(img_data_file)
+                cells_count += len(pd.read_pickle(img_data_file))
             else:
                 cells = {"x":[], "y":[], "z":[]}
                 if image_type is None and not image_type:
@@ -369,15 +389,21 @@ class GeneExpressionAPI(Paths):
                     img_cells = self.find_cells_in_image(img, expid, ish_minval=ish_minval)
                 else:
                     # just get bright pixels
+                    start = timeit.default_timer()
                     img_cells = self.analyze_expression_image(img, expid, image_type=image_type, threshold=threshold, **kwargs)
+                    end = timeit.default_timer()
+                    if self.debug:
+                        print("     Extracting cells from image took: {}".format(end-start))
                 
                 cells['x'].extend(img_cells[0])
                 cells['y'].extend(img_cells[1])
                 cells['z'].extend(img_cells[2])
+                cells_count += len(img_cells[0])
 
                 cells = pd.DataFrame(cells)
                 cells.to_pickle(img_data_file)
                 data_files.append(img_data_file)
+        print("Extracted {} cells\n\n".format(cells_count))
         return data_files
     
     def load_cells(self, expid=None, exp_data_path=None, image_type="expression", count_cells=True):
@@ -409,25 +435,57 @@ class GeneExpressionAPI(Paths):
         return files
     
     def analyze_expression_image(self, img_path, expid, threshold=60, image_type=None):
+        start = timeit.default_timer()
         img = misc.imread(img_path)
-        # img = img[:, :, 0] # keep only the red
+        end = timeit.default_timer()
+        if self.debug:
+            print("     Loading image took: {}".format(end-start))
 
-        # threshold the image
-        thresh = threshold_otsu(img[img > threshold], nbins=256) #
-        bw = img > thresh
+        if not self.use_opencv: # use skimage instead
+            # threshold the image
+            # thresh = threshold_otsu(img[img > threshold], nbins=256) #
+            bw = img > threshold
 
-        # label image regions with an integer. Each region gets a unique integer
-        label_image = label(bw)
-        rprops = regionprops(label_image)
+            # label image regions with an integer. Each region gets a unique integer
+            label_image = label(bw)
+            rprops = regionprops(label_image)
 
-        # grab the X and Y pixels at the center of each labeled region
-        cell_x_pix = np.array([roi['centroid'][1] for roi in rprops])
-        cell_y_pix = np.array([roi['centroid'][0] for roi in rprops])
+            # grab the X and Y pixels at the center of each labeled region
+            cell_x_pix = np.array([roi['centroid'][1] for roi in rprops])
+            cell_y_pix = np.array([roi['centroid'][0] for roi in rprops])
+        else:
+            # Convert to gray and threshold
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            ret, thresh = cv2.threshold(img, threshold, 255, cv2.THRESH_BINARY)
+
+            # imgray = img[img > threshold]
+            # imgray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            # ret, thresh = cv2.threshold(imgray, 0, 255, cv2.THRESH_BINARY+cv2.THRESH_OTSU)
+            # use adaptive thresholding:
+            # th3 = cv2.adaptiveThreshold(imgray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY,11,2)
+
+            # Extract centroids location from contours
+            _, contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            centroids = [cv2.minEnclosingCircle(cnt) for cnt in contours]
+            cell_x_pix = [x for (x,y),r in centroids]
+            cell_y_pix = [y for (x,y),r in centroids]
+
+
+
+        end = timeit.default_timer()
+        if self.debug:
+            print("     Image thresholding took: {}".format(end-start))
+
 
         # Align the cells coordinates to the Alle CCF v3
+        start = timeit.default_timer()
         img_id = self.imgid_from_imgpath(img_path, image_type=image_type)
         aligned = self.align_cell_coords_to_ccf(cell_x_pix,
                       cell_y_pix, expid, img_id)
+        end = timeit.default_timer()
+        if self.debug:
+            print("     Aligning {} cells took {}".format(len(cell_x_pix), end-start))
+
         return aligned
 
     def find_cells_in_image(self, img_path, expid, ish_minval=70):
@@ -475,16 +533,23 @@ class GeneExpressionAPI(Paths):
                 common coordinate framework (CCF) in units of micrometers
         """
         # implement the 2D affine transform for image_to_section coordinates
+        start = timeit.default_timer()
         t_2d = self.get_affine_2d(section_image_id)
         tmtx_tsv = np.hstack((t_2d['A_mtx'], t_2d['translation']))
         tmtx_tsv = np.vstack((tmtx_tsv, [0, 0, 1]))  # T matrix for 2D affine
         data_mtx = np.vstack((x_pix, y_pix, np.ones_like(x_pix)))  # [3 x Npix]
         xy_2d_align = np.dot(tmtx_tsv, data_mtx)
+        end = timeit.default_timer()
+        if self.debug:
+            print("         2D affine took: {}".format(end-start))
+        
 
         # implement the 3D affine transform for section_to_CCF coordinates
+        start = timeit.default_timer()
         t_3d = self.get_affine_3d(section_data_set_id)
         tmtx_tvr = np.hstack((t_3d['A_mtx'], t_3d['translation']))
         tmtx_tvr = np.vstack((tmtx_tvr, [0, 0, 0, 1]))
+
 
         data_mtx = np.vstack((xy_2d_align[0, :], xy_2d_align[1, :],
                             np.ones((1, xy_2d_align.shape[1])) * t_2d['section_number'] * t_3d['section_thickness'],
@@ -492,6 +557,9 @@ class GeneExpressionAPI(Paths):
 
         xyz_3d_align = np.dot(tmtx_tvr, data_mtx)
         pir = xyz_3d_align[0:3, :]
+        end = timeit.default_timer()
+        if self.debug:  
+            print("         3D affine took: {}".format(end-start))
         return pir
 
 
@@ -576,25 +644,37 @@ class GeneExpressionAPI(Paths):
         ########## DEBUG FUNCTIONS ############
     """
     @staticmethod
-    def display_image(img):
-        if isinstance(img, str):
-            image = Image.open(img)
-        elif isinstance(img, np.ndarray):
-            image = Image.fromarray(img)
-        elif isinstance(img, bytes):
-            image = Image.frombytes(img)
+    def display_image(img, with_napari=True):
+        if not with_napari:
+            if isinstance(img, str):
+                image = Image.open(img)
+            elif isinstance(img, np.ndarray):
+                image = Image.fromarray(img)
+            elif isinstance(img, bytes):
+                image = Image.frombytes(img)
+            else:
+                raise ValueError("image data type unknown")
+            image.show()
         else:
-            raise ValueError("image data type unknown")
-        image.show()
+            with napari.gui_qt():
+                if len(img.shape == 2):
+                    viewer = napari.view_image(img, rgb=False)
+                else:
+                    viewer = napari.view_image(img, rgb=True)
+
+    
 
 if __name__ == "__main__":
-    api = GeneExpressionAPI()
-    api.load_raw_grid_data("Data/ABA/gene_expression/71670687/energy.mhd", threshold=80, 
-                            metadata_file=None, gridsize=200, visualize=True)
-    api.get_gene_expression_to_obj(71670687, threshold=99.99)
+    api = GeneExpressionAPI(debug=False)
+    # api.load_raw_grid_data("Data/ABA/gene_expression/71670687/energy.mhd", threshold=80, 
+    #                         metadata_file=None, gridsize=200, visualize=True)
+    # api.get_gene_expression_to_obj(71670687, threshold=99.99)
 
-    # api.get_cells_for_experiment(71670687, image_type=None, overwrite=True, threshold=0)
-    
-    
-    
+
+    for expid in api.HCF_genes:
+        api.get_cells_for_experiment(expid, image_type="expression", overwrite=True, threshold=204)
+
+
+
+
     # api.load_cells(api.test_dataset_id)
