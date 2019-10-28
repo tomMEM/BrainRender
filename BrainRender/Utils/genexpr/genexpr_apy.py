@@ -15,6 +15,12 @@ from scipy import misc
 from PIL import Image
 Image.MAX_IMAGE_PIXELS = None # <- deactivate image bomb error
 
+# For loadng volumetric data
+import napari
+import SimpleITK as sitk
+import nrrd
+from BrainRender.Utils.image import image_to_surface
+
 
 from BrainRender.Utils.paths_manager import Paths
 from BrainRender.Utils.data_io import connected_to_internet, strip_path, listdir
@@ -51,6 +57,8 @@ class GeneExpressionAPI(Paths):
     expression_image_download_url = "http://api.brain-map.org/api/v2/image_download/IMAGEID?view=expression"
     projection_image_download_url = "http://api.brain-map.org/api/v2/projection_image_download/IMAGEID?downsample=0&view=projection"
 
+    gridded_expression_url = "http://api.brain-map.org/grid_data/download/EXPID?include=energy,intensity"
+
     # URLs based on https://github.com/efferencecopy/ecallen/blob/master/ecallen/images.py
     experiment_metadata_url = ('http://api.brain-map.org/api/v2/data/query.json?criteria='
                         'model::SectionDataSet'
@@ -73,12 +81,31 @@ class GeneExpressionAPI(Paths):
         Paths.__init__(self)
         self.test_dataset_id = 167643437
 
+        self.nrrd_fld = os.path.join(self.gene_expression, "nrrd")
+        if not os.path.isdir(self.nrrd_fld):
+            os.mkdir(self.nrrd_fld)
+
+        self.root_bounds = ([-17, 13193],  # used to reshape gene expression grid arrays
+                            [134, 7564], 
+                            [486, 10891])
+
     """
         ################## DATA IO ########################
     """
     def get_all_available_genes(self):
         url = self.all_mouse_genes_url
         res = pd.DataFrame(request(url, return_json=True)['msg'])
+
+    def download_gridded_expression_data(self, expid):
+        exp_dir = os.path.join(self.gene_expression, str(expid))
+        if not os.path.isdir(exp_dir): os.mkdir(exp_dir)
+        url = self.gridded_expression_url.replace("EXPID", str(expid))
+
+        # res = request(url, return_json=False)
+        print("\nThis is not automated yet, but please download the file going to the url: ")
+        print(url)
+        print("\nThen move the files to: {}\n\n".format(exp_dir))
+
 
     @staticmethod
     def imgid_from_imgpath(imgpath, image_type="expression"):
@@ -469,6 +496,83 @@ class GeneExpressionAPI(Paths):
 
 
     """
+        ########## GRID VOLUME FUNCTIONS ############
+    """
+
+    def load_raw_grid_data(self, volume_file, expid=None, metadata_file=None, threshold=None, # threshold is in percentile
+                                gridsize=25, visualize=False, save_to_obj=True, **kwargs):
+        if metadata_file is not None:
+            if not ".xml" in metadata_file: 
+                raise ValueError("Unrecognized file format for metadata file.")
+            pass
+        else:
+            # Load either a .raw or .mhd file and turn into a numpy array
+            if ".raw" in volume_file:
+                if gridsize == 25:
+                    shape = (528, 320, -1) # 456
+                elif gridsize == 200:
+                    shape = (67, 41, -1) # 58
+                else:
+                    raise ValueError("Unrecognized gridsize value")
+
+                # Load data to a numpy array
+                f = open(volume_file, "rb")
+                data = np.fromfile(f,dtype=np.uint8,count=shape[0]*shape[1]*shape[2])
+                f.close()
+                # data = np.frombuffer(data, dtype=np.uint8)
+                data = data.reshape(*shape)
+            elif ".mhd" in volume_file:
+                data = sitk.ReadImage(volume_file)
+                data = sitk.GetArrayFromImage(data)
+            else:
+                raise ValueError("Unrecognized file format for volume file")
+
+        # Get N percentile and threshold
+        if threshold is not None:
+            th = np.percentile(data, threshold)
+            data[data <= th] = 0
+        else:
+            th = 0
+
+        # visualize the array interactively in napari
+        if visualize:
+            with napari.gui_qt():
+                viewer = napari.view_image(data, rgb=False)
+
+        # save 
+        if save_to_obj:
+            fname = os.path.split(volume_file)[-1].split(".")[0]
+            if expid is None:
+                expid = ""
+            obj_path = os.path.join(self.nrrd_fld, fname+"_"+str(expid)+".obj")
+            nrrd_path = os.path.join(self.nrrd_fld, fname+"_"+str(expid)+".nrrd")
+            nrrd.write(nrrd_path, data)
+
+            image_to_surface(nrrd_path, obj_path, voxel_size=float(gridsize), threshold=th, 
+                    **kwargs)
+
+            return obj_path
+
+    def get_gene_expression_to_obj(self, expid, display="energy", **kwargs):
+        exp_dir = os.path.join(self.gene_expression, str(expid))
+        if not os.path.isdir(exp_dir): return
+
+        relevant_files = [f for f in listdir(exp_dir) if ".mhd" in f or ".raw" in f or ".xml" in f]
+        if not relevant_files:
+            self.download_gridded_expression_data(expid)
+            return
+
+        volume_file = [f for f in relevant_files if display in f]
+        if not volume_file:
+            raise ValueError("Could not find a file to display: {}".format(display))
+        if len(volume_file) == 1:
+            volume_file = volume_file[0]
+        else:
+            volume_file = [f for f in volume_file if ".mhd" in f][0]
+        return self.load_raw_grid_data(volume_file, expid=expid, gridsize=200, visualize=False, 
+                    save_to_obj=True, orientation="coronal", **kwargs)
+
+    """
         ########## DEBUG FUNCTIONS ############
     """
     @staticmethod
@@ -485,11 +589,12 @@ class GeneExpressionAPI(Paths):
 
 if __name__ == "__main__":
     api = GeneExpressionAPI()
-    # print(api.search_experiments_ids("coronal", "Avp", fetch_images=False))
-    # api.fetch_images_for_exp(1687, image_type="expression")
-    # api.get_cells_for_experiment(71670687, image_type="projection", overwrite=True, threshold=0)
+    api.load_raw_grid_data("Data/ABA/gene_expression/71670687/energy.mhd", threshold=80, 
+                            metadata_file=None, gridsize=200, visualize=True)
+    api.get_gene_expression_to_obj(71670687, threshold=99.99)
 
-    api.get_all_available_genes()
-
+    # api.get_cells_for_experiment(71670687, image_type=None, overwrite=True, threshold=0)
+    
+    
+    
     # api.load_cells(api.test_dataset_id)
-\
