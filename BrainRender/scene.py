@@ -202,6 +202,8 @@ class Scene(ABA):  # subclass brain render to have acces to structure trees
 			# try to load previously stored CoMs
 			try:
 				coms = self.get_all_centers_of_mass(compute=False)
+				if not regions in coms.acronym.values:
+					raise ValueError
 			except:
 				# CoMs hadn't been saved, need to do it manually
 				# load mesh corresponding to brain region
@@ -218,9 +220,9 @@ class Scene(ABA):  # subclass brain render to have acces to structure trees
 					return [np.int(x) for x in mesh.centerOfMass()]
 			else:
 				if unilateral:
-					return coms[regions][hemisphere]
+					return coms.loc[coms.acronym == regions][hemisphere].values[0]
 				else:
-					return coms[regions]["both"]
+					return coms.loc[coms.acronym == regions]["both"].values[0]
 		else:
 			raise NotImplementedError
 			coms = {}
@@ -300,11 +302,11 @@ class Scene(ABA):  # subclass brain render to have acces to structure trees
 		filepath = os.path.join("Data/Metadata", "regions_center_of_mass.pkl")
 		if compute:
 			coms = {'acronym':[], 'left':[], 'right':[], 'both':[]}
-			for region in self.structures:
-				coms['acronym'].append(region['acronym'])
-				coms['left'].append(self.get_region_CenterOfMass(region['acronym'], unilateral=True, hemisphere="left"))
-				coms['right'].append(self.get_region_CenterOfMass(region['acronym'], unilateral=True, hemisphere="right"))
-				coms['both'].append(self.get_region_CenterOfMass(region['acronym'], unilateral=False))
+			for region in self.structures.acronym.values:
+				coms['acronym'].append(region)
+				coms['left'].append(self.get_region_CenterOfMass(region, unilateral=True, hemisphere="left"))
+				coms['right'].append(self.get_region_CenterOfMass(region, unilateral=True, hemisphere="right"))
+				coms['both'].append(self.get_region_CenterOfMass(region, unilateral=False))
 			coms = pd.DataFrame(coms)
 			coms.to_pickle(filepath)
 		else:
