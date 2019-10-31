@@ -797,7 +797,7 @@ class Scene(ABA):  # subclass brain render to have acces to structure trees
 				f"File format: {filepath.suffix} is not currently supported. "
 				f"Please use one of: {supported_formats}")
 
-	def add_cells_for_genexpression(self, expid=None, exp_data_folder=None, downsample=False,  
+	def add_cells_for_genexpression(self, expid=None, exp_data_folder=None, downsample=False, twodslider=True,  
 				colors=["green", "orange"], image_type="expression", color_by_region=False, **kwargs):
 		"""
 			[DOCS MISSING]
@@ -848,21 +848,26 @@ class Scene(ABA):  # subclass brain render to have acces to structure trees
 			else:
 				p1, p2 = [-20, 8000, 11000], [13200, 8000, 11000] # orientation for coronal slices by  default
 
-		if self.slices_slider is not None:
-			self.slices_slider = self.plotter.addSlider3D(
-								sliderfunc, xmin=0.01, xmax=n_slices, value=n_slices/2,
-								pos1=p1, pos2=p2, c="ivory", title=None, showValue=False)
+		if self.slices_slider is None:
+			if not twodslider:
+				self.slices_slider = self.plotter.addSlider3D(
+									sliderfunc, xmin=0.01, xmax=n_slices, value=n_slices/2,
+									pos1=p1, pos2=p2, c="ivory", title=None, showValue=False)
 
-			# Modify the look of the slider
-			slider = self.slices_slider.GetRepresentation()
-			slider.SetTubeWidth(0.01)
-			slider.SetSliderWidth(0.03)
-			slider.SetTitleHeight(0.03)
-			slider.SetLabelHeight(0.02)
-			slider.SetRotation(180)
+				# Modify the look of the slider
+				slider = self.slices_slider.GetRepresentation()
+				slider.SetTubeWidth(0.01)
+				slider.SetSliderWidth(0.03)
+				slider.SetTitleHeight(0.03)
+				slider.SetLabelHeight(0.02)
+				slider.SetRotation(180)
+			else:
+				self.plotter.addSlider2D(sliderfunc, xmin=0.01, xmax=n_slices, value=n_slices/2,
+									pos=14, c="ivory", title=None, showValue=True)
 
 			self.show_genexp_button = True
 			self.genexp_container = all_cells
+
 
 	def add_genexpr_button(self):
 		# Add a button to show all slices

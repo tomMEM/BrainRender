@@ -499,7 +499,7 @@ class GeneExpressionAPI(Paths):
 		print("Extracted {} cells\n\n".format(cells_count))
 		return data_files
 	
-	def analyze_expression_image(self, img_path, expid, threshold=60, max_radius = 30, min_radius = 7.5, image_type=None):
+	def analyze_expression_image(self, img_path, expid, threshold=70, max_radius = 30, min_radius = 7.5, image_type=None,):
 		"""
 			[Extract cell locations from an experimental FISH or ISH image]
 		
@@ -522,8 +522,9 @@ class GeneExpressionAPI(Paths):
 		# grab the RNA probes from the imaging parameters
 		img_params = self.get_imaging_params(expid)
 
-		if img_params['blue_channel'] is None or img_params['green_channel'] is None or img_params['red_channel'] is None:
-			raise ValueError("Experiment imaging params doesn't have data about channel meaning, cannot analyze.")
+		if img_params['is_FISH']: # check that metadata are complete
+			if img_params['blue_channel'] is None or img_params['green_channel'] is None or img_params['red_channel'] is None:
+				raise ValueError("Experiment imaging params doesn't have data about channel meaning, cannot analyze.")
 
 		if not img_params['is_FISH'] and img_params['is_ISH']:
 			is_ish = True
@@ -536,18 +537,15 @@ class GeneExpressionAPI(Paths):
 			raise ValueError("The experiment being analysed is ISH (not FISH), so you should use image_type=None")
 
 		if is_ish: 
-			warnings.warn("ISH expeirments analysis needs to be reifined, at the moment it picks up lots of stuff which is not cells")
-			# TODO it still extracts too much stuff, and the border of the slice is picked up too
-			# TODO check metadata
+			# Invert the image so that cells are bright
+			inverted_img =  dtype_limits(img)[1] - img
 
 			# Create max projection of the image
-			img = np.max(img[:, :, 0:1], axis=2)
+			inverted_img = np.max(inverted_img[:, :, 0:1], axis=2)
 
-			# Invert the image so that cells are bright
-			inverted_img = 255 - img
 
 			# Hard threshold to remove noise
-			th = threshold_otsu(inverted_img)
+			th = threshold_otsu(inverted_img[inverted_img > threshold], nbins=256)
 			th_img = inverted_img.copy()
 			th_img[th_img < th] = 0
 		else:
@@ -565,7 +563,7 @@ class GeneExpressionAPI(Paths):
 			img = np.max(img[:, :, 0:1], axis=2)
 
 			# Hard threshold to remove noise
-			th = threshold_otsu(img)
+			th = threshold_otsu(img, nbins=256)
 			th_img = img.copy()
 			th_img[th_img < th] = 0
 
@@ -776,4 +774,4 @@ class GeneExpressionAPI(Paths):
 if __name__ == "__main__":
 	api = GeneExpressionAPI(debug=False)
 	
-	api.get_cells_for_experiment(api.example_fish_experiment, overwrite=True,  max_radius = 20, min_radius = 12.5)
+	api.get_cells_for_experiment(81790712, overwrite=True,  max_radius = 30, min_radius = 5)
