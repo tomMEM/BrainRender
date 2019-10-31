@@ -824,8 +824,9 @@ class Scene(ABA):  # subclass brain render to have acces to structure trees
 			if not color_by_region:
 				cells_colors = [color for i in range(len(cells))]
 			else:
-				cells_colors = [self.get_region_color(self.get_structure_from_coordinates(cell)['acronym']) 
-										for cell in cells]
+				cell_regions = [self.get_structure_from_coordinates(cell) for cell in cells.values]
+				cells_colors = [self.get_region_color(cell['acronym']) if cell is not None else "ivory" 
+										for cell in cell_regions]
 			slice_cells = self.add_cells(cells, color=cells_colors, force_int=True, **kwargs)
 			all_cells.append(slice_cells)
 		all_cells = all_cells[::-1] # reverse the order to match the slider

@@ -405,7 +405,10 @@ class ABA(Paths):
 
     def get_structure_from_coordinates(self, p0):
         voxel = np.round(np.array(p0) / self.resolution).astype(int)
-        structure_id = self.annotated_volume[voxel[0], voxel[1], voxel[2]]
+        try:
+            structure_id = self.annotated_volume[voxel[0], voxel[1], voxel[2]]
+        except:
+            return None
 
         # Each voxel in the annotation volume is annotated as specifically as possible
         structure = self.structure_tree.get_structures_by_id([structure_id])[0]

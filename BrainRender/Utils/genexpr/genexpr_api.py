@@ -776,4 +776,4 @@ class GeneExpressionAPI(Paths):
 if __name__ == "__main__":
 	api = GeneExpressionAPI(debug=False)
 	
-	api.get_cells_for_experiment(api.example_fish_experiment, overwrite=True)
+	api.get_cells_for_experiment(api.example_fish_experiment, overwrite=True,  max_radius = 20, min_radius = 12.5)
