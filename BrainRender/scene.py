@@ -798,7 +798,10 @@ class Scene(ABA):  # subclass brain render to have acces to structure trees
 				f"Please use one of: {supported_formats}")
 
 	def add_cells_for_genexpression(self, expid=None, exp_data_folder=None, downsample=False,  
-				colors=["green", "orange"], image_type="expression", **kwargs):
+				colors=["green", "orange"], image_type="expression", color_by_region=False, **kwargs):
+		"""
+			[DOCS MISSING]
+		"""
 		# Get the files with the cell data
 		cells_files = self.geapi.load_cells(exp_data_path=exp_data_folder, expid=expid, image_type=image_type)
 		if not cells_files:
@@ -818,7 +821,11 @@ class Scene(ABA):  # subclass brain render to have acces to structure trees
 				if downsample > 1:
 					n_cells = int(len(cells)/downsample)
 					cells = cells.sample(n_cells)
-			cells_colors = [color for i in range(len(cells))]
+			if not color_by_region:
+				cells_colors = [color for i in range(len(cells))]
+			else:
+				cells_colors = [self.get_region_color(self.get_structure_from_coordinates(cell)['acronym']) 
+										for cell in cells]
 			slice_cells = self.add_cells(cells, color=cells_colors, force_int=True, **kwargs)
 			all_cells.append(slice_cells)
 		all_cells = all_cells[::-1] # reverse the order to match the slider
@@ -872,8 +879,6 @@ class Scene(ABA):  # subclass brain render to have acces to structure trees
 			bold=True,
 			italic=False,
 		)
-
-
 
 	def add_cells(self, coords, color="ivory", radius=25, res=3, force_int=False): 
 		"""

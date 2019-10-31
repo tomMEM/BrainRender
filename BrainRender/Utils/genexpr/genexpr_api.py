@@ -27,14 +27,15 @@ else:
 	opencv_imported = False
 	
 
-import matplotlib.pyplot as plt
+# import matplotlib.pyplot as plt
 
 # For loadng volumetric data
-# import napari
+import napari
 import SimpleITK as sitk
 import nrrd
 from BrainRender.Utils.image import image_to_surface
 
+from allensdk.api.queries.mouse_atlas_api import MouseAtlasApi
 
 from BrainRender.Utils.paths_manager import Paths
 from BrainRender.Utils.data_io import connected_to_internet, strip_path, listdir
@@ -100,8 +101,8 @@ class GeneExpressionAPI(Paths):
 		Paths.__init__(self)
 		self.debug = debug
 
-		self.example_fish_experiment = 159120103
-		self.example_ish_experiment = 167643437
+		self.example_ish_experiment = 159120103
+		self.example_fish_experiment = 167643437
 
 		self.nrrd_fld = os.path.join(self.gene_expression, "nrrd")
 		if not os.path.isdir(self.nrrd_fld):
@@ -111,9 +112,55 @@ class GeneExpressionAPI(Paths):
 							[134, 7564], 
 							[486, 10891])
 
+		self.maapi = MouseAtlasApi() # used to gene list of genes
+
 	"""
 		################## DATA IO ########################
 	"""
+	def get_genes(self):
+		"""
+			[Returns a list of genes whose experiments metadata can be queried with search experiments ids]
+		"""
+		genes_metadata_file = os.path.join("Data/Metadata", "mouse_genes.pkl")
+		if not os.path.isfile(genes_metadata_file):
+			print("Downloading gene metadata might take a while...")
+			genes = pd.DataFrame([gene for gene in self.maapi.get_genes()])
+			genes.to_pickle(genes_metadata_file)
+			print("mouse genes data saved to file")
+		else:
+			genes = pd.read_pickle(genes_metadata_file)
+		return genes
+	
+	def get_all_experiments_metadata(self):
+		metadata_file = os.path.join("Data/Metadata", "mouse_genes_experiments.pkl")
+		if not os.path.isfile(metadata_file):
+			print("Downloading gene expression experiments metadata might take a while...")
+			genes = pd.DataFrame([exp for exp in self.maapi.get_section_data_sets()])
+			genes.to_pickle(metadata_file)
+		else:
+			genes = pd.read_pickle(metadata_file)
+		return genes
+
+	def get_gene_metadata(self, name = None, id_number=None, acronym=None):
+		genes = self.get_genes()
+
+		if name is not None:
+			filtered =  genes.loc[genes['name'] == name]
+		elif id_number is not None:
+			filtered =  genes.loc[genes['id'] == id_number]
+		elif acronym is not None:
+			filtered = genes.loc[genes['acronym'] == acronym]
+		else:
+			raise ValueError("No search criteria passed")
+
+		if filtered.empty():
+			print("No genes were found with the given search criteria")
+			return None
+		else:
+			return filtered
+
+
+
 	def get_all_available_genes(self):
 		url = self.all_mouse_genes_url
 		res = pd.DataFrame(request(url, return_json=True)['msg'])
@@ -124,6 +171,7 @@ class GeneExpressionAPI(Paths):
 		url = self.gridded_expression_url.replace("EXPID", str(expid))
 
 		# res = request(url, return_json=False)
+		# TODO use the MouseAtlasApi instead: https://allensdk.readthedocs.io/en/latest/allensdk.api.queries.mouse_atlas_api.html
 		print("\nThis is not automated yet, but please download the file going to the url: ")
 		print(url)
 		print("\nThen move the files to: {}\n\n".format(exp_dir))
@@ -136,7 +184,7 @@ class GeneExpressionAPI(Paths):
 			img_id = int(strip_path(imgpath)[-1].split("_")[0])
 		return img_id
 
-	def search_experiments_ids(self, plane, gene, fetch_images=False):
+	def search_experiments_ids(self, gene, plane=None, fetch_images=False):
 		"""
 			[Given a plane of section and a gene name, checks for ISH experiments that match the criteria. 
 			Optionally, it takes care of downloading the corresponding images]
@@ -148,6 +196,7 @@ class GeneExpressionAPI(Paths):
 			Keyword arguments:
 				fetch_images {[bool]} -- [If true the imges for the experiments found are downloaded]
 		"""
+		# TODO improve this using: https://allensdk.readthedocs.io/en/latest/allensdk.api.queries.mouse_atlas_api.html
 		url = self.gene_search_url.replace("PLANE", plane).replace("GENE", gene)
 		res = pd.DataFrame(request(url, return_json=True)['msg'])
 
@@ -431,8 +480,7 @@ class GeneExpressionAPI(Paths):
 		print("Extracted {} cells\n\n".format(cells_count))
 		return data_files
 	
-
-	def analyze_expression_image(self, img_path, expid, threshold=60, ish_minval=70, max_radius = 30, min_radius = 7.5, image_type=None):
+	def analyze_expression_image(self, img_path, expid, threshold=60, max_radius = 30, min_radius = 7.5, image_type=None):
 		"""
 			[Extract cell locations from an experimental FISH or ISH image]
 		
@@ -469,6 +517,8 @@ class GeneExpressionAPI(Paths):
 			raise ValueError("The experiment being analysed is ISH (not FISH), so you should use image_type=None")
 
 		if is_ish: 
+			# TODO it still extracts too much stuff, and the border of the slice is picked up too
+
 			# Create max projection of the image
 			img = np.max(img[:, :, 0:1], axis=2)
 
@@ -502,7 +552,10 @@ class GeneExpressionAPI(Paths):
 				ret, thresh = cv2.threshold(closed, 0,255, cv2.THRESH_BINARY+cv2.THRESH_OTSU)
 
 				# Extract centroids location from contours
-				contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+				if int(cv2.__version__[0]) >= 3:
+					_, contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+				else:
+					contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 				centroids = [cv2.minEnclosingCircle(cnt) for cnt in contours]
 				cell_x_pix = [x for (x,y),r in centroids if r<=max_radius and r >= min_radius]
 				cell_y_pix = [y for (x,y),r in centroids if r<=max_radius and r >= min_radius]
@@ -577,7 +630,6 @@ class GeneExpressionAPI(Paths):
 				# grab the X and Y pixels at the center of each labeled region
 				cell_x_pix = np.array([roi['centroid'][1] for roi in rprops])
 				cell_y_pix = np.array([roi['centroid'][0] for roi in rprops])
-
 
 		# Align the cells coordinates to the Alle CCF v3
 		img_id = self.imgid_from_imgpath(img_path, image_type=image_type)
@@ -739,4 +791,6 @@ class GeneExpressionAPI(Paths):
 
 if __name__ == "__main__":
 	api = GeneExpressionAPI(debug=False)
-	api.get_cells_for_experiment(api.example_fish_experiment, image_type=None, overwrite=True, threshold=100)
+	# api.search_experiments_ids("Pzp")
+	api.get_all_experiments_metadata()
+	# api.get_cells_for_experiment(api.example_fish_experiment, image_type=None, overwrite=True, threshold=100)
