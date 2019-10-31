@@ -11,6 +11,27 @@ import urllib.error as urlerr
 
 mouselight_base_url = "http://ml-neuronbrowser.janelia.org/"
 
+
+def request(url, return_json=False):
+	if not connected_to_internet():
+		raise ConnectionError("You need to have an internet connection to send requests.")
+	response = requests.get(url)
+	if response.ok:
+		if not return_json:
+			return response
+		else:
+			try:
+				json_tree = response.json()
+			except:
+				raise ValueError("Could not get json for query: {}".format(url))
+			if json_tree['success']:
+				return json_tree
+			else:
+				exception_string = 'did not complete api query successfully'
+	else:
+		exception_string = 'URL request failed: {}'.format(response.reason)
+	raise ValueError(exception_string)
+
 def query_mouselight(query):
 	"""
 		[Sends a GET request, not currently used for anything.]

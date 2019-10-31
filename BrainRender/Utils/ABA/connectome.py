@@ -1,113 +1,27 @@
-import pandas as pd
+import sys
+sys.path.append("./")
+
 import numpy as np
-import os
-from collections import namedtuple
-from vtkplotter import Plotter, show, interactive, Video, settings, Sphere, shapes
-import warnings 
+from vtkplotter import Lines, Spheres, Line, Tube, Assembly
+from tqdm import tqdm
 
-from allensdk.core.mouse_connectivity_cache import MouseConnectivityCache
-from allensdk.api.queries.ontologies_api import OntologiesApi
-from allensdk.api.queries.reference_space_api import ReferenceSpaceApi
-from allensdk.api.queries.mouse_connectivity_api import MouseConnectivityApi
-from allensdk.api.queries.tree_search_api import TreeSearchApi
+from BrainRender.scene import Scene
+from BrainRender.colors import *
 
-from BrainRender.Utils.paths_manager import Paths
+class Connectome(Scene):
+    def __init__(self, *args, **kwargs):
+        Scene.__init__(self, *args, **kwargs)
+        self.connections = None
 
+    def get_connectome_for_region(self, region, *args, **kwargs):
+        self.seed = region
+        mtx = self.get_projection_matrix_for_region(region, *args, **kwargs)
 
-class ABA(Paths):
-    """[This class handles interaction with the Allen Brain Atlas datasets and APIs to get structure trees, 
-    experimental metadata and results, tractography data etc. ]
-
-    """
-    # useful vars for analysis    
-    excluded_regions = ["fiber tracts"]
-
-    def __init__(self, projection_metric = "projection_energy", paths_file=None):
-        """ path_file {[str]} -- [Path to a YAML file specifying paths to data folders, to replace default paths] (default: {None}) """
-
-        Paths.__init__(self, paths_file=paths_file)
-
-        self.projection_metric = projection_metric
-
-        # get mouse connectivity cache and structure tree
-        self.mcc = MouseConnectivityCache(manifest_file=os.path.join(self.mouse_connectivity_cache, "manifest.json"))
-        self.structure_tree = self.mcc.get_structure_tree()
-        
-        # get ontologies API and brain structures sets
-        self.oapi = OntologiesApi()
-        self.get_structures_sets()
-
-        # get reference space
-        self.space = ReferenceSpaceApi()
-
-        # mouse connectivity API [used for tractography]
-        self.mca = MouseConnectivityApi()
-
-        # Get tree search api
-        self.tree_search = TreeSearchApi()
-
-        # Get some metadata about experiments
-        self.all_experiments = self.mcc.get_experiments(dataframe=True)
-        self.strains = sorted([x for x in set(self.all_experiments.strain) if x is not None])
-        self.transgenic_lines = sorted(set([x for x in set(self.all_experiments.transgenic_line) if x is not None]))
-
-    ####### GET EXPERIMENTS DATA
-    def get_structures_sets(self):
-        summary_structures = self.structure_tree.get_structures_by_set_id([167587189])  # main summary structures
-        summary_structures = [s for s in summary_structures if s["acronym"] not in self.excluded_regions]
-        self.structures = pd.DataFrame(summary_structures)
-
-        # Other structures sets
-        try:
-            all_sets = pd.DataFrame(self.oapi.get_structure_sets())
-        except:
-            print("Could not retrieve data, possibly because there is no internet connection.")
-        else:
-            sets = ["Summary structures of the pons", "Summary structures of the thalamus", 
-                        "Summary structures of the hypothalamus", "List of structures for ABA Fine Structure Search",
-                        "Structures representing the major divisions of the mouse brain", "Summary structures of the midbrain", "Structures whose surfaces are represented by a precomputed mesh"]
-            self.other_sets = {}
-            for set_name in sets:
-                set_id = all_sets.loc[all_sets.description == set_name].id.values[0]
-                self.other_sets[set_name] = pd.DataFrame(self.structure_tree.get_structures_by_set_id([set_id]))
-
-            self.all_avaliable_meshes = sorted(self.other_sets["Structures whose surfaces are represented by a precomputed mesh"].acronym.values)
-
-    def print_structures_list_to_text(self):
-        s = self.other_sets["Structures whose surfaces are represented by a precomputed mesh"].sort_values('acronym')
-        with open('all_regions.txt', 'w') as o:
-            for acr, name in zip(s.acronym.values, s['name'].values):
-                o.write("({}) -- {}\n".format(acr, name))
-
-    def load_all_experiments(self, cre=False):
-        """
-            This function downloads all the experimental data from the MouseConnectivityCache and saves the unionized results 
-            as pickled pandas dataframes. The process is slow, but the ammount of disk space necessary to save the data is small, 
-            so it's worth downloading all the experiments at once to speed up subsequent analysis. 
-
-            params:
-                cre [Bool] - default (False). Set to true if you want to download experimental data from injections in cre driver lines
-
-        """
-        
-        # TODO allow user to select specific cre lines?
-
-        # Downloads all experiments from allen brain atlas and saves the results as an easy to read pkl file
-        for acronym in self.structures.acronym.values:
-            print("Fetching experiments for : {}".format(acronym))
-
-            structure = self.structure_tree.get_structures_by_acronym([acronym])[0]
-            experiments = self.mcc.get_experiments(cre=cre, injection_structure_ids=[structure['id']])
-
-            print("     found {} experiments".format(len(experiments)))
-
-            try:
-                structure_unionizes = self.mcc.get_structure_unionizes([e['id'] for e in experiments], 
-                                                            is_injection=False,
-                                                            structure_ids=self.structures.id.values,
-                                                            include_descendants=False)
-            except: pass
-            structure_unionizes.to_pickle(os.path.join(self.output_data, "{}.pkl".format(acronym)))
+        # Average across experiments
+        expr = np.mean(mtx['matrix'], 0)
+        target_regions = [self.structure_tree.get_structures_by_id([r['structure_id']])[0]['acronym'] for r in mtx['columns']]
+        self.connections =  {reg:val for reg, val in zip(target_regions, expr)}
+        return self.connections
     
     def print_structures(self):
         acronyms, names = self.structures.acronym.values, self.structures['name'].values
@@ -320,3 +234,42 @@ class ABA(Paths):
     def get_structure_descendants(self, regions):
         return self.get_structure_ancestors(regions, ancestors=False, descendants=True)
 
+    def visualize_connectome(self, cutoff_perc=25, show_mesh=False):
+        if self.connections is None:
+            print("You need to run 'get_connectome_for_region' first!")
+
+        # Add seed brain region
+        self.add_brain_regions(self.seed, use_original_color=True, alpha=.8)
+        self.edit_actors(self.actors['regions'][self.seed], wireframe=True)
+        self.seed_coords = self.get_region_CenterOfMass(self.seed)
+
+        # Get colors for each target region
+        colors = self.get_region_color(list(self.connections.keys()))
+
+        # Get variables for sphere and edges
+        max_strength = np.percentile(list(self.connections.values()), 90)
+        threshold = np.percentile(list(self.connections.values()), cutoff_perc)
+        target_coords, sphere_colors, tubes = [], [], []
+        for (region, strength), region_color in tqdm(zip(self.connections.items(), colors)):
+            coords = self.get_region_CenterOfMass(region)
+            target_coords.append(coords)
+            sphere_colors.append(region_color)
+
+            if strength > threshold:
+                link_color = colorMap(strength, name='jet', vmin=0, vmax=max_strength)
+                tubes.append(Tube([self.seed_coords, coords], c=link_color, alpha=.8, r=10, res=4))
+
+                if show_mesh:
+                    self.add_brain_regions(region, use_original_color=True, alpha=.4)
+        self.actors['others'].append(Assembly(tubes))
+
+        # Create spheres actors
+        start_coords = [self.seed_coords for i in range(len(target_coords))]
+        self.actors['others'].append(Spheres(target_coords, r=50, c=sphere_colors, alpha=.8, res=8))
+
+
+if __name__ == '__main__':
+    cc = Connectome()
+    cc.get_connectome_for_region("MOs", hemisphere="right", parameter='projection_density')
+    cc.visualize_connectome(cutoff_perc=90, show_mesh=True)
+    cc.render()

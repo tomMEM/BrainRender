@@ -11,7 +11,6 @@
 *.nrrd
 *.swc
 *.svg
-
 *.tdms
 
 # These file formats are tracked
@@ -19,6 +18,11 @@
 # *.png
 # *.mp4
 # *.jpg
+
+# Ignore the content of data folders
+Data/*
+Data/
+Data/ABA/gene_expression
 
 # Output folder where screnshots etx. are saved
 Output/Data/*
