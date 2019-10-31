@@ -15,6 +15,7 @@ from scipy import misc
 from PIL import Image
 Image.MAX_IMAGE_PIXELS = None # <- deactivate image bomb error
 import timeit
+import warnings
 
 if __name__ == "__main__":
 	try:
@@ -452,7 +453,7 @@ class GeneExpressionAPI(Paths):
 		rprops = regionprops(label_image)
 		return rprops
 
-	def get_cells_for_experiment(self, expid, ish_minval=85, image_type="expression", threshold=70, overwrite=False, **kwargs):
+	def get_cells_for_experiment(self, expid, ish_minval=85, image_type=None, threshold=70, overwrite=False, **kwargs):
 		# download the images for the experiment:
 		self.fetch_images_for_exp(expid, image_type=image_type)
 
@@ -535,7 +536,9 @@ class GeneExpressionAPI(Paths):
 			raise ValueError("The experiment being analysed is ISH (not FISH), so you should use image_type=None")
 
 		if is_ish: 
+			warnings.warn("ISH expeirments analysis needs to be reifined, at the moment it picks up lots of stuff which is not cells")
 			# TODO it still extracts too much stuff, and the border of the slice is picked up too
+			# TODO check metadata
 
 			# Create max projection of the image
 			img = np.max(img[:, :, 0:1], axis=2)
@@ -544,110 +547,73 @@ class GeneExpressionAPI(Paths):
 			inverted_img = 255 - img
 
 			# Hard threshold to remove noise
-			th_i_img = inverted_img.copy()
-			th_i_img[th_i_img < threshold] = 0
-
-			if not self.use_opencv: # use skimage instead
-				raise NotImplementedError
-				# threshold the image
-				# thresh = threshold_otsu(img[img > threshold], nbins=256) #
-				bw = img > threshold
-
-				# label image regions with an integer. Each region gets a unique integer
-				label_image = label(bw)
-				rprops = regionprops(label_image)
-
-				# grab the X and Y pixels at the center of each labeled region
-				cell_x_pix = np.array([roi['centroid'][1] for roi in rprops])
-				cell_y_pix = np.array([roi['centroid'][0] for roi in rprops])
-			else:
-				# Apply closure to the image
-				kernel = np.ones((31,31),np.uint8)
-				closed = cv2.morphologyEx(th_i_img, cv2.MORPH_CLOSE, kernel)
-
-				# Invert again  and threshold
-				# img = 255 - closed
-				ret, thresh = cv2.threshold(closed, 0,255, cv2.THRESH_BINARY+cv2.THRESH_OTSU)
-
-				# Extract centroids location from contours
-				if int(cv2.__version__[0]) >= 3:
-					_, contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-				else:
-					contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-				centroids = [cv2.minEnclosingCircle(cnt) for cnt in contours]
-				cell_x_pix = [x for (x,y),r in centroids if r<=max_radius and r >= min_radius]
-				cell_y_pix = [y for (x,y),r in centroids if r<=max_radius and r >= min_radius]
-				radiuses = [r for (x,y),r in centroids if r<=max_radius and r >= min_radius]
-
-				# ? Used for checking cell extraction quality
-				# f, ax = plt.subplots()
-				# ax.imshow(thresh, cmap="gray")
-
-				# for (x,y),r in centroids:
-				# 	if r <= max_radius and r >= min_radius:
-				# 		ax.add_artist(plt.Circle((x, y), r, color='r', fill=False))
-
-				# f, ax = plt.subplots()
-				# ax.imshow(np.asarray(_img), cmap="gray")
-				# plt.show()
-
-
+			th = threshold_otsu(inverted_img)
+			th_img = inverted_img.copy()
+			th_img[th_img < th] = 0
 		else:
-				"""	Segment neuron cell bodies via thresholding.
-					Accepts images from the Allen Brain Institute (ISH or FISH) and segments
-					fluorescently labeled neuron cell bodies. Segmentation is accomplished by
-					computing a label matrix on the thresholded image (via Otsu's method).
+			# Check metadata 
+			if img_params['probes'] is None or not img_params['probes']: 
+				raise ValueError("Invalid imaging parameters: {} for FISH experiment".format(img_params))
 
-					Args:
-						img_path (str): full path to the image.
-						params (dict):  The experiment's parameters (see .get_imaging_params).
-						probes (list): list of strings, specifying the RNA target of the
-							ISH or FISH stain
-						ish_minval (int): applies to ISH images only. Any value below
-							this will be ignored by the thresholding algorithm.
-							Default value is 70.
-					Returns:
-						rprops (list): each element is a dictionary of region properties
-							as defined by scikit-image's regionprops function
-				"""
+			channels = ["red_channel", "green_channel", "blue_channel"]
+			probe_ch = [ch for ch in channels if img_params[ch].lower() in img_params['probes']]
 
-				channels = ["red_channel", "green_channel", "blue_channel"]
-				not_none_channels = [ch for ch in channels if params[ch] is not None]
-				probe_ch = [params[ch].lower() in probes if ch in not_none_channels else False 
-								for ch in channels]
+			if not probe_ch or len(probe_ch) == len(channels): 
+				raise ValueError("Did not identify the correct number of channels for FISH experiment")
 
-				# open the image
-				# img = skio.imread(img_path)
-				img = misc.imread(img_path)
+			# Create image max projection
+			img = np.max(img[:, :, 0:1], axis=2)
 
-				if params['is_FISH']:
-					n_ch_correct = sum(probe_ch) > 0 and sum(probe_ch) <= 3
-					assert n_ch_correct, "Did not identify the correct number of channels"
-					img = np.array(img[:, :, probe_ch]).max(axis=2)  # max project
+			# Hard threshold to remove noise
+			th = threshold_otsu(img)
+			th_img = img.copy()
+			th_img[th_img < th] = 0
 
-					# measure threshold
-					thresh = threshold_otsu(img, nbins=256)
 
-				elif params['is_ISH']:
-					img = dtype_limits(img)[1] - img  # invert
-					assert sum(probe_ch) == 3, "Not all ISH color channels identical"
-					img = np.max(img, axis=2)  # max project inverted image
+		# EXTRACT CELL LOCATIONS
+		if not self.use_opencv: # use skimage instead
+			raise NotImplementedError
+			# # threshold the image
+			# # thresh = threshold_otsu(img[img > threshold], nbins=256) #
+			# bw = img > th
 
-					# measure threshold
-					thresh = threshold_otsu(img[img > ish_minval], nbins=256)
-				else:
-					raise ValueError('Image is neither FISH nor ISH')
+			# # label image regions with an integer. Each region gets a unique integer
+			# label_image = label(bw)
+			# rprops = regionprops(label_image)
 
-				# apply the threshold to the image, which is now just a 2D matrix
-				bw = img > thresh
+			# # grab the X and Y pixels at the center of each labeled region
+			# cell_x_pix = np.array([roi['centroid'][1] for roi in rprops])
+			# cell_y_pix = np.array([roi['centroid'][0] for roi in rprops])
+		else:
+			# Apply closure to the image
+			kernel = np.ones((31,31),np.uint8)
+			closed = cv2.morphologyEx(th_img, cv2.MORPH_CLOSE, kernel)
 
-				# label image regions with an integer. Each region gets a unique integer
-				label_image = label(bw)
-				rprops = regionprops(label_image)
+			# Invert again  and threshold
+			# img = 255 - closed
+			ret, thresh = cv2.threshold(closed, 0,255, cv2.THRESH_BINARY+cv2.THRESH_OTSU)
 
-				# grab the X and Y pixels at the center of each labeled region
-				cell_x_pix = np.array([roi['centroid'][1] for roi in rprops])
-				cell_y_pix = np.array([roi['centroid'][0] for roi in rprops])
+			# Extract centroids location from contours
+			if int(cv2.__version__[0]) >= 3:
+				_, contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+			else:
+				contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+			centroids = [cv2.minEnclosingCircle(cnt) for cnt in contours]
+			cell_x_pix = [x for (x,y),r in centroids if r<=max_radius and r >= min_radius]
+			cell_y_pix = [y for (x,y),r in centroids if r<=max_radius and r >= min_radius]
+			radiuses = [r for (x,y),r in centroids if r<=max_radius and r >= min_radius]
+
+			# ? Used for checking cell extraction quality
+			# f, ax = plt.subplots()
+			# ax.imshow(thresh, cmap="gray")
+
+			# for (x,y),r in centroids:
+			# 	if r <= max_radius and r >= min_radius:
+			# 		ax.add_artist(plt.Circle((x, y), r, color='r', fill=False))
+
+			# f, ax = plt.subplots()
+			# ax.imshow(np.asarray(_img), cmap="gray")
+			# plt.show()
 
 		# Align the cells coordinates to the Alle CCF v3
 		img_id = self.imgid_from_imgpath(img_path, image_type=image_type)
@@ -809,6 +775,5 @@ class GeneExpressionAPI(Paths):
 
 if __name__ == "__main__":
 	api = GeneExpressionAPI(debug=False)
-	api.search_experiments_ids("Pzp")
 	
-	# api.get_cells_for_experiment(api.example_fish_experiment, image_type=None, overwrite=True, threshold=100)
+	api.get_cells_for_experiment(api.example_fish_experiment, overwrite=True)
