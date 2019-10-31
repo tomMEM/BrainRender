@@ -626,12 +626,11 @@ class Scene(ABA):  # subclass brain render to have acces to structure trees
                 except:
                     raise ValueError("Could not extract color for region: {}".format(colorby))
         else:
-            if colorby is not None:
-                color = kwargs.pop("color", None)
-                try:
-                    get_n_shades_of(color, 1)
-                except:
-                    raise ValueError("Invalide color argument: {}".format(color))
+            color = kwargs.pop("color", None)
+            try:
+                get_n_shades_of(color, 1)
+            except:
+                raise ValueError("Invalide color argument: {}".format(color))
 
         if isinstance(sl_file, list):
             if isinstance(sl_file[0], str): # we have a list of files to add
