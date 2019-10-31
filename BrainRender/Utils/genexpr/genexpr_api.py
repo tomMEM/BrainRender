@@ -159,8 +159,6 @@ class GeneExpressionAPI(Paths):
 		else:
 			return filtered
 
-
-
 	def get_all_available_genes(self):
 		url = self.all_mouse_genes_url
 		res = pd.DataFrame(request(url, return_json=True)['msg'])
@@ -184,21 +182,41 @@ class GeneExpressionAPI(Paths):
 			img_id = int(strip_path(imgpath)[-1].split("_")[0])
 		return img_id
 
-	def search_experiments_ids(self, gene, plane=None, fetch_images=False):
+	def search_experiments_ids(self, gene, plane=None, use_query=False, fetch_images=False):
 		"""
 			[Given a plane of section and a gene name, checks for ISH experiments that match the criteria. 
 			Optionally, it takes care of downloading the corresponding images]
 
 			Arguments:
-				plane {[str]} -- ['sagittal' or 'coronal']
 				gene {[str]} -- [name of the gene, you can lookup genes here: "http://mouse.brain-map.org"]
 
 			Keyword arguments:
+				plane {[str]} -- ['sagittal' or 'coronal', if None metadat for both are returned if not using query, it's necessary if using query]
 				fetch_images {[bool]} -- [If true the imges for the experiments found are downloaded]
+				use_query {[bool]} -- [If False the stored experiments metadata are used, otherwise a web query is made. ]
 		"""
-		# TODO improve this using: https://allensdk.readthedocs.io/en/latest/allensdk.api.queries.mouse_atlas_api.html
-		url = self.gene_search_url.replace("PLANE", plane).replace("GENE", gene)
-		res = pd.DataFrame(request(url, return_json=True)['msg'])
+		if not use_query:
+			all_metadata = self.get_all_experiments_metadata()
+			if plane is not None:
+				if plane == "sagittal": plane = 2
+				else: plane = 1
+				
+				all_metadata = all_metadata.loc[all_metadata.plane_of_section_id == plane]
+
+			genes = [gene[0]['acronym'] if gene else "" for gene in all_metadata['genes'].values]
+			try:
+				indices = [i for i, x in enumerate(genes) if x == gene]
+				if not indices: raise ValueError
+
+				res = all_metadata.iloc[indices]
+			except:
+				print("Gene {} was not found!".format(gene))
+				return None
+		else:
+			if plane is None: 
+				raise ValueError("When getting gene experiments data with a query, plane cannot be None")
+			url = self.gene_search_url.replace("PLANE", plane).replace("GENE", gene)
+			res = pd.DataFrame(request(url, return_json=True)['msg'])
 
 		if res.empty:
 			print("Could not find any experiments that match the search criteria: {} - {}".format(plane, gene))
@@ -791,6 +809,6 @@ class GeneExpressionAPI(Paths):
 
 if __name__ == "__main__":
 	api = GeneExpressionAPI(debug=False)
-	# api.search_experiments_ids("Pzp")
-	api.get_all_experiments_metadata()
+	api.search_experiments_ids("Pzp")
+	
 	# api.get_cells_for_experiment(api.example_fish_experiment, image_type=None, overwrite=True, threshold=100)
