@@ -108,6 +108,11 @@ class ImageDownload(SvgApi, ImageDownloadApi):
 
 imgd = ImageDownload()
 
+
+
+
+
+
 # %%
 # Products are the different types of experiments performed by allen
 path = "/Users/federicoclaudi/Dropbox (UCL - SWC)/Rotation_vte/Presentations/atlases/allen_mouse_sagittal"

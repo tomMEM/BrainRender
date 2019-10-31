@@ -247,8 +247,6 @@ class ABA(Paths):
 
         return mtx
 
-
-
     def fetch_experiments_data(self, experiments_id, *args, average_experiments=False, base_structures=True, **kwargs):
         if isinstance(experiments_id, np.ndarray):
             experiments_id = [int(x) for x in experiments_id]

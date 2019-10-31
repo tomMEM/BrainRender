@@ -5,7 +5,7 @@ import pandas as pd
 from collections import namedtuple
 
 from BrainRender.Utils.webqueries import *
-from BrainRender.Utils.ABA.connectome import ABA
+from BrainRender.Utils.ABA.connectomeAPI import ABA
 from BrainRender.Utils.data_manipulation import is_any_item_in_list
 
 

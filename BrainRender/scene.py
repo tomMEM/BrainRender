@@ -18,7 +18,7 @@ from BrainRender.Utils.ABA.connectomeAPI import ABA
 from BrainRender.Utils.data_io import load_json, load_volume_file
 from BrainRender.Utils.data_manipulation import get_coords, flatten_list, get_slice_coord, is_any_item_in_list, mirror_actor_at_point
 from BrainRender.Utils import actors_funcs
-from BrainRender.Utils.genexpr.genexpr_apy import GeneExpressionAPI
+from BrainRender.Utils.genexpr.genexpr_api import GeneExpressionAPI
 
 from BrainRender.Utils.parsers.mouselight import NeuronsParser, edit_neurons
 from BrainRender.Utils.parsers.streamlines import parse_streamline
