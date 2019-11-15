@@ -1,4 +1,5 @@
-<script type='text/javascript' src='https://www.x3dom.org/download/x3dom.js'> </script>
+<script type='text/javascript' src='https://www.x3dom.org/download/x3dom.js'> 
+</script>
 
 
 <x3d width='600px' height='600px'>
