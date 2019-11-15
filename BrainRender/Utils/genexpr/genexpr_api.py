@@ -27,8 +27,11 @@ if __name__ == "__main__":
 else:
 	opencv_imported = False
 	
-
-# import matplotlib.pyplot as plt
+# For visualization in debugging
+import matplotlib as mpl
+if sys.platform == "darwin":
+    mpl.use("Qt5Agg")
+import matplotlib.pyplot as plt
 
 # For loadng volumetric data
 import napari
@@ -41,6 +44,7 @@ from allensdk.api.queries.mouse_atlas_api import MouseAtlasApi
 from BrainRender.Utils.paths_manager import Paths
 from BrainRender.Utils.data_io import connected_to_internet, strip_path, listdir
 from BrainRender.Utils.webqueries import request
+from BrainRender.Utils.genexpr.cell_extract import extract_from_image, remove_background
 
 """
 	The GeneExpressionAPI takes care of interacting with the image download API from the Allen ISH experiments
@@ -533,19 +537,22 @@ class GeneExpressionAPI(Paths):
 		else:
 			raise ValueError("Unrecognized imaging params: {}".format(img_params))
 
-		if is_ish and image_type:
-			raise ValueError("The experiment being analysed is ISH (not FISH), so you should use image_type=None")
-
 		if is_ish: 
-			# Invert the image so that cells are bright
-			inverted_img =  dtype_limits(img)[1] - img
+			if not image_type or image_type is None:
+				# Invert the image so that cells are bright
+				img = remove_background(img) 
+				inverted_img =  dtype_limits(img)[1] - img
+			else:
+				inverted_img = img
 
 			# Create max projection of the image
 			inverted_img = np.max(inverted_img[:, :, 0:1], axis=2)
 
-
 			# Hard threshold to remove noise
-			th = threshold_otsu(inverted_img[inverted_img > threshold], nbins=256)
+			if threshold >= np.max(inverted_img):
+				th =  threshold
+			else:
+				th = threshold_otsu(inverted_img[inverted_img > threshold], nbins=256)
 			th_img = inverted_img.copy()
 			th_img[th_img < th] = 0
 		else:
@@ -583,40 +590,28 @@ class GeneExpressionAPI(Paths):
 			# cell_x_pix = np.array([roi['centroid'][1] for roi in rprops])
 			# cell_y_pix = np.array([roi['centroid'][0] for roi in rprops])
 		else:
-			# Apply closure to the image
-			kernel = np.ones((31,31),np.uint8)
-			closed = cv2.morphologyEx(th_img, cv2.MORPH_CLOSE, kernel)
-
-			# Invert again  and threshold
-			# img = 255 - closed
-			ret, thresh = cv2.threshold(closed, 0,255, cv2.THRESH_BINARY+cv2.THRESH_OTSU)
-
-			# Extract centroids location from contours
-			if int(cv2.__version__[0]) >= 3:
-				_, contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-			else:
-				contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-			centroids = [cv2.minEnclosingCircle(cnt) for cnt in contours]
-			cell_x_pix = [x for (x,y),r in centroids if r<=max_radius and r >= min_radius]
-			cell_y_pix = [y for (x,y),r in centroids if r<=max_radius and r >= min_radius]
-			radiuses = [r for (x,y),r in centroids if r<=max_radius and r >= min_radius]
+			refimg, x, y, r = extract_from_image(th_img, method="contours", min_radius=min_radius, max_radius=max_radius)
 
 			# ? Used for checking cell extraction quality
-			# f, ax = plt.subplots()
-			# ax.imshow(thresh, cmap="gray")
+			if self.debug:
+				f, axarr = plt.subplots(ncols=2)
+				axarr[0].imshow(refimg, cmap="gray")
 
-			# for (x,y),r in centroids:
-			# 	if r <= max_radius and r >= min_radius:
-			# 		ax.add_artist(plt.Circle((x, y), r, color='r', fill=False))
+				for x,y,r in zip(x, y, r):
+					if r <= max_radius and r >= min_radius:
+						axarr[0].add_artist(plt.Circle((x, y), r, color='r', fill=False))
+						axarr[1].add_artist(plt.Circle((x, y), r, color='r', fill=False))
 
-			# f, ax = plt.subplots()
-			# ax.imshow(np.asarray(_img), cmap="gray")
-			# plt.show()
+				axarr[1].imshow(np.asarray(_img), cmap="gray")
 
-		# Align the cells coordinates to the Alle CCF v3
+				figpath, figname = os.path.split(img_path)
+				plt.savefig(os.path.join(figpath, figname.split(".")[0]+"_cells.png"))
+
+				# plt.show()
+
+		# Align the cells coordinates to the Allen CCF v3
 		img_id = self.imgid_from_imgpath(img_path, image_type=image_type)
-		aligned = self.align_cell_coords_to_ccf(cell_x_pix,
-					  cell_y_pix, expid, img_id)
+		aligned = self.align_cell_coords_to_ccf(x, y, expid, img_id)
 
 		return aligned
 
@@ -640,19 +635,13 @@ class GeneExpressionAPI(Paths):
 				common coordinate framework (CCF) in units of micrometers
 		"""
 		# implement the 2D affine transform for image_to_section coordinates
-		start = timeit.default_timer()
 		t_2d = self.get_affine_2d(section_image_id)
 		tmtx_tsv = np.hstack((t_2d['A_mtx'], t_2d['translation']))
 		tmtx_tsv = np.vstack((tmtx_tsv, [0, 0, 1]))  # T matrix for 2D affine
 		data_mtx = np.vstack((x_pix, y_pix, np.ones_like(x_pix)))  # [3 x Npix]
 		xy_2d_align = np.dot(tmtx_tsv, data_mtx)
-		end = timeit.default_timer()
-		if self.debug:
-			print("         2D affine took: {}".format(end-start))
-		
 
 		# implement the 3D affine transform for section_to_CCF coordinates
-		start = timeit.default_timer()
 		t_3d = self.get_affine_3d(section_data_set_id)
 		tmtx_tvr = np.hstack((t_3d['A_mtx'], t_3d['translation']))
 		tmtx_tvr = np.vstack((tmtx_tvr, [0, 0, 0, 1]))
@@ -664,9 +653,6 @@ class GeneExpressionAPI(Paths):
 
 		xyz_3d_align = np.dot(tmtx_tvr, data_mtx)
 		pir = xyz_3d_align[0:3, :]
-		end = timeit.default_timer()
-		if self.debug:  
-			print("         3D affine took: {}".format(end-start))
 		return pir
 
 
@@ -772,6 +758,8 @@ class GeneExpressionAPI(Paths):
 	
 
 if __name__ == "__main__":
-	api = GeneExpressionAPI(debug=False)
-	
-	api.get_cells_for_experiment(81790712, overwrite=True,  max_radius = 30, min_radius = 5)
+	api = GeneExpressionAPI(debug=True)
+
+	for expid in [74363341, 72129253, 73615573, 72129241, 730]:
+		api.get_cells_for_experiment(expid, overwrite=True,  max_radius = 40, min_radius = 1, 
+											threshold=125, image_type="expression")
